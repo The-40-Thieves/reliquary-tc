@@ -473,12 +473,12 @@ function localResolutionError<T extends { code?: string }>(resolution: {
   const installCommand = localEmbedderInstallHint();
   return err.embeddingProviderError(
     runtimeMissing
-      ? `${what}: its runtime for this host is missing. Install it: ${installCommand}`
+      ? `${what}: its runtime for this host is missing. Install it: ${installCommand} (if this platform has no published runtime, use ollama or a hosted provider instead)`
       : `${what}: it is not installed (reliquary-tc does not install it by default). Install it: ${installCommand}`,
     {
       attempts: resolution.attempts,
       hint: runtimeMissing
-        ? `npm installs ${runtimePackage} for this host; if this platform has no published runtime, pick ollama or a hosted provider instead.`
+        ? `npm installs ${runtimePackage} for this host.`
         : 'semantic search stays off until then; ollama and the hosted providers need no local embedder — see "reliquary-tc doctor" for the full attempt list.',
     },
   );

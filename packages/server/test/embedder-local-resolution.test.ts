@@ -275,7 +275,8 @@ describe("buildLocalEmbeddingProvider", () => {
       expect((error as Error).message).toContain(
         `npm install --save-exact @the-40-thieves/reliquary-tc-embedder-local@${version}`,
       );
-      expect(details?.hint).toMatch(/ollama|hosted provider/);
+      // The fallback is in the message: reconcile_errors and stderr never show the hint.
+      expect((error as Error).message).toMatch(/use ollama or a hosted provider instead/);
     }
   });
 
