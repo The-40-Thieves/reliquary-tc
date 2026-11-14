@@ -450,7 +450,7 @@ export function buildLocalEmbeddingProvider(
 /** The error for a local embedder that does not resolve. The install command is in the MESSAGE:
  *  server_health's reconcile_errors and the "[index] reconcile degraded" stderr line carry the
  *  message alone, and a zero-config npm install lands here on its first start (GH #1524). A source
- *  checkout is told to build instead. The embedder child folds the hint into the message too
+ *  checkout gets the build command there instead. The embedder child folds the hint into the message too
  *  (child-main.ts), so the hint does not repeat the command. */
 function localResolutionError<T extends { code?: string }>(resolution: {
   attempts: T[];
@@ -458,10 +458,13 @@ function localResolutionError<T extends { code?: string }>(resolution: {
 }) {
   const what = `embeddings.provider "local" could not resolve the optional ${LOCAL_EMBEDDER_PACKAGE} package`;
   if (resolution.inSourceCheckout) {
-    return err.embeddingProviderError(what, {
-      attempts: resolution.attempts,
-      hint: 'run "bun run build" in packages/embedder-local (this is a source checkout) — see "reliquary-tc doctor" for the full attempt list.',
-    });
+    return err.embeddingProviderError(
+      `${what}: this source checkout has not built it. Run "bun run build" in packages/embedder-local`,
+      {
+        attempts: resolution.attempts,
+        hint: 'see "reliquary-tc doctor" for the full attempt list.',
+      },
+    );
   }
   const runtimeMissing = resolution.attempts.some(
     (attempt) => attempt.code === "OBTC_EMBEDDER_RUNTIME_MISSING",

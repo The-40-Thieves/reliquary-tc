@@ -306,7 +306,8 @@ describe("buildLocalEmbeddingProvider", () => {
     } catch (error) {
       const e = error as { message: string; details?: { hint?: string } };
       expect(e.message).not.toContain("npm install");
-      expect(e.details?.hint).toContain('run "bun run build" in packages/embedder-local');
+      expect(e.message).toContain('Run "bun run build" in packages/embedder-local');
+      expect(e.details?.hint).not.toContain("bun run build");
     }
   });
 
