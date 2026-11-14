@@ -447,21 +447,39 @@ export function buildLocalEmbeddingProvider(
   };
 }
 
-/** The error for a local embedder that does not resolve, with the install hint for this platform. The
- *  embedder child sends only the message across the protocol, so the hint is folded into it (child-main.ts). */
-function localResolutionError<T extends { code?: string }>(resolution: { attempts: T[] }) {
+/** The error for a local embedder that does not resolve. The install command is in the MESSAGE:
+ *  server_health's reconcile_errors and the "[index] reconcile degraded" stderr line carry the
+ *  message alone, and a zero-config npm install lands here on its first start (GH #1524). A source
+ *  checkout gets the build command there instead. The embedder child folds the hint into the message too
+ *  (child-main.ts), so the hint does not repeat the command. */
+function localResolutionError<T extends { code?: string }>(resolution: {
+  attempts: T[];
+  inSourceCheckout?: boolean;
+}) {
+  const what = `embeddings.provider "local" could not resolve the optional ${LOCAL_EMBEDDER_PACKAGE} package`;
+  if (resolution.inSourceCheckout) {
+    return err.embeddingProviderError(
+      `${what}: this source checkout has not built it. Run "bun run build" in packages/embedder-local`,
+      {
+        attempts: resolution.attempts,
+        hint: 'see "reliquary-tc doctor" for the full attempt list.',
+      },
+    );
+  }
   const runtimeMissing = resolution.attempts.some(
     (attempt) => attempt.code === "OBTC_EMBEDDER_RUNTIME_MISSING",
   );
   const runtimePackage = `${LOCAL_EMBEDDER_PACKAGE}-${process.platform}-${process.arch}`;
   const installCommand = localEmbedderInstallHint();
   return err.embeddingProviderError(
-    `embeddings.provider "local" could not resolve the optional ${LOCAL_EMBEDDER_PACKAGE} package`,
+    runtimeMissing
+      ? `${what}: its runtime for this host is missing. Install it: ${installCommand} (if this platform has no published runtime, use ollama or a hosted provider instead)`
+      : `${what}: it is not installed (reliquary-tc does not install it by default). Install it: ${installCommand}`,
     {
       attempts: resolution.attempts,
       hint: runtimeMissing
-        ? `run ${installCommand} (npm installs ${runtimePackage} for this host); if this platform has no published runtime, pick ollama or a hosted provider instead.`
-        : `run "bun run build" in packages/embedder-local (source checkouts), or install the package with ${installCommand} (reliquary-tc does not install it by default) — see "reliquary-tc doctor" for the full attempt list.`,
+        ? `npm installs ${runtimePackage} for this host.`
+        : 'semantic search stays off until then; ollama and the hosted providers need no local embedder — see "reliquary-tc doctor" for the full attempt list.',
     },
   );
 }

@@ -272,10 +272,43 @@ describe("buildLocalEmbeddingProvider", () => {
     } catch (error) {
       const details = (error as { details?: { hint?: string } }).details;
       expect(details?.hint).toContain(runtimePackage);
-      expect(details?.hint).toContain(
+      expect((error as Error).message).toContain(
         `npm install --save-exact @the-40-thieves/reliquary-tc-embedder-local@${version}`,
       );
-      expect(details?.hint).toMatch(/ollama|hosted provider/);
+      // The fallback is in the message: reconcile_errors and stderr never show the hint.
+      expect((error as Error).message).toMatch(/use ollama or a hosted provider instead/);
+    }
+  });
+
+  // GH #1524: reconcile_errors and the "[index] reconcile degraded" stderr line carry only the
+  // message, so the install command has to be in it, not only in details.hint.
+  it("an installed reliquary-tc without the embedder: the MESSAGE names the install command", async () => {
+    const resolveModule = async () => ({
+      ok: false as const,
+      attempts: [{ route: "bare-specifier" as const, target: "x", ok: false, error: "boom" }],
+      inSourceCheckout: false,
+    });
+    const provider = buildLocalEmbeddingProvider(BASE_CFG, TEST_CTX, resolveModule);
+    await expect(provider.embed(["a"])).rejects.toThrow(
+      `is not installed (reliquary-tc does not install it by default). Install it: npm install --save-exact @the-40-thieves/reliquary-tc-embedder-local@${version}`,
+    );
+  });
+
+  it("a source checkout is told to build, and its message does not send it to npm", async () => {
+    const resolveModule = async () => ({
+      ok: false as const,
+      attempts: [{ route: "bare-specifier" as const, target: "x", ok: false, error: "boom" }],
+      inSourceCheckout: true,
+    });
+    const provider = buildLocalEmbeddingProvider(BASE_CFG, TEST_CTX, resolveModule);
+    try {
+      await provider.embed(["a"]);
+      throw new Error("expected embed() to reject");
+    } catch (error) {
+      const e = error as { message: string; details?: { hint?: string } };
+      expect(e.message).not.toContain("npm install");
+      expect(e.message).toContain('Run "bun run build" in packages/embedder-local');
+      expect(e.details?.hint).not.toContain("bun run build");
     }
   });
 

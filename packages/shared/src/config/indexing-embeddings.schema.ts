@@ -68,7 +68,7 @@ export const EmbeddingsConfigSchema = z.object({
     .min(1)
     .default("local")
     .describe(
-      "Embeddings backend name, resolved against the provider registry at startup. Built-ins: local (a bundled, fully offline dense embedder via the optional @the-40-thieves/reliquary-tc-embedder-local package; no network, no Ollama, no API key), ollama, openai, voyage, cohere, bge-m3, model-tier (splits dense and multi-vector across two services), the generic openai-compatible, and the profile-gated module. `local` is the DEFAULT when this whole block is absent — semantic search works with zero configuration. An unregistered name is a startup error listing every valid option.",
+      "Embeddings backend name, resolved against the provider registry at startup. Built-ins: local (a dense embedder that runs in-process via the optional @the-40-thieves/reliquary-tc-embedder-local package; no Ollama and no API key, and no network once the first use has downloaded the pinned model weights), ollama, openai, voyage, cohere, bge-m3, model-tier (splits dense and multi-vector across two services), the generic openai-compatible, and the profile-gated module. `local` is the DEFAULT when this whole block is absent. The Docker image, the .mcpb bundle and the standalone binaries carry that package, so semantic search works there with zero configuration; an npm install leaves it out, and the server names the install command at startup. An unregistered name is a startup error listing every valid option.",
     ),
   model: z
     .string()

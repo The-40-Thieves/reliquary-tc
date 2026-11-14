@@ -150,9 +150,9 @@ function hostedSuggestions(env: Record<string, string | undefined>): HostedProvi
  * The ONE decision point for `reliquary-tc setup`'s embeddings choice. Precedence, closest match to
  * GH #995's own resolution order:
  *   1. an existing index's provider (never overridden — see `existingIndex`'s own doc comment)
- *   2. the bundled local embedder, when it can actually run here (model picked by RAM)
+ *   2. the local embedder, when it can actually run here (model picked by RAM)
  *   3. Ollama, when it is running AND has a recognizable embedding model already pulled
- *   4. the bundled local embedder anyway, with a notice — it will fail to embed until the
+ *   4. the local embedder anyway, with a notice — it will fail to embed until the
  *      underlying problem (an unbuilt/unpublished package, or an unsupported platform) is fixed,
  *      but "local" is still the right schema-consistent default to write: it is what a fresh
  *      config would resolve to unconfigured, and this makes that explicit instead of silent.
@@ -249,8 +249,8 @@ function decideStayLocal(input: SetupInputs): SetupEmbeddingsDecision {
       dimensions,
       reason:
         model === LOW_RAM_LOCAL_MODEL
-          ? `the bundled local embedder is available; ${model} was picked over the default nomic-embed-text-v1.5 because this machine has under ${LOW_RAM_THRESHOLD_MB}MB RAM (${input.totalMemMb}MB)`
-          : "an existing cache directory was found with nothing to keep as a different provider, and the bundled local embedder is available — staying on local",
+          ? `the local embedder is available; ${model} was picked over the default nomic-embed-text-v1.5 because this machine has under ${LOW_RAM_THRESHOLD_MB}MB RAM (${input.totalMemMb}MB)`
+          : "an existing cache directory was found with nothing to keep as a different provider, and the local embedder is available — staying on local",
     };
   }
   return {
@@ -270,7 +270,7 @@ function decideStayLocal(input: SetupInputs): SetupEmbeddingsDecision {
  *  two callers. */
 function localUnavailableNotice(input: SetupInputs): string {
   return (
-    `the bundled local embedder could not be confirmed working here` +
+    `the local embedder could not be confirmed working here` +
     (input.localUnavailableReason ? ` (${input.localUnavailableReason})` : "") +
     " — indexing will fail until this is fixed (build/install the package, run Ollama with an embedding model pulled, or set embeddings.provider to a hosted provider yourself)."
   );
@@ -285,8 +285,8 @@ function decideFreshEmbeddings(input: SetupInputs): SetupEmbeddingsDecision {
       dimensions,
       reason:
         model === LOW_RAM_LOCAL_MODEL
-          ? `the bundled local embedder is available; ${model} was picked over the default nomic-embed-text-v1.5 because this machine has under ${LOW_RAM_THRESHOLD_MB}MB RAM (${input.totalMemMb}MB)`
-          : "the bundled local embedder is available; no existing index and no memory constraint found — using the default catalog model",
+          ? `the local embedder is available; ${model} was picked over the default nomic-embed-text-v1.5 because this machine has under ${LOW_RAM_THRESHOLD_MB}MB RAM (${input.totalMemMb}MB)`
+          : "the local embedder is available; no existing index and no memory constraint found — using the default catalog model",
     };
   }
   if (input.ollama?.reachable) {

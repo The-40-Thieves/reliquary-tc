@@ -309,7 +309,7 @@ export function formatStickyEmbeddingsNotice(
     `embeddings: kept ${identity} from this vault's existing index — embeddings.provider was not ` +
     "set in config. reliquary-tc 1.31.4/1.31.5 silently switched an unconfigured install's provider " +
     'to "local" on upgrade, forcing a full in-process re-embed (GH #995); this version keeps your ' +
-    "existing provider by default instead. To switch to the bundled local embedder, set " +
+    "existing provider by default instead. To switch to the local embedder, set " +
     'embeddings.provider: "local" (or embeddings.onProviderChange: "switch") in your config — either ' +
     "re-embeds the whole vault once.\n"
   );

@@ -21,7 +21,8 @@ Usage:
                                           Detect the environment ONCE and write an explicit config
                                           (GH #995's fix): Obsidian vaults, an existing index's
                                           embeddings provider (kept, never silently switched), the
-                                          bundled local embedder's availability, or a running
+                                          local embedder (offering to install it when an npm
+                                          install left it out), or a running
                                           Ollama with an embedding model pulled — printing every
                                           decision with its reason. A hosted provider's API key
                                           being present in the environment is only ever SUGGESTED,
