@@ -94,6 +94,8 @@ lexical search is unaffected.
 ```sh
 docker run --rm -v "$HOME/vaults:/vaults" \
   -v "$HOME/.config/reliquary-tc:/config" \
+  -v reliquary-tc-cache:/data/cache \
+  -e RELIQUARY_TC_CACHE_DIR=/data/cache \
   ghcr.io/the-40-thieves/reliquary-tc:2.0.1 /config/config.json
 ```
 
@@ -101,8 +103,11 @@ The image is an `oven/bun:1.4.2-slim` build (Debian, glibc): the native prebuild
 gnu, so a glibc base keeps them loadable instead of forcing the pure-JS fallback. The
 image carries the built local embedder next to the server, so the default `local`
 provider resolves with no extra install. The model weights are not in the image: the
-first search downloads them into the cache directory, so mount that directory to keep
-them across container restarts.
+first search downloads them into the cache directory. The command above puts the cache
+on the named volume `reliquary-tc-cache` (`RELIQUARY_TC_CACHE_DIR` sets `cacheDir`), so
+the weights and the index survive `--rm` and a new container. Without that volume every
+new container downloads the weights and rebuilds the index. More in
+[Docker deployment](/deployment/docker/).
 
 ## One-click bundle (`.mcpb`)
 
