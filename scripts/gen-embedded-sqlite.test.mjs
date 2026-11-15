@@ -101,6 +101,8 @@ test("the release smoke step fails a binary whose startup output reports notes_f
   assert.ok(start !== -1 && step.length > 0, "smoke step not found in publish.yml");
   assert.match(
     step,
-    /if echo "\$out" \| grep -q "notes_fts failed"; then\n\s+echo "::error::[^\n]+\n\s+exit 1\n/,
+    /if grep -q "notes_fts failed" <<<"\$out"; then\n\s+echo "::error::[^\n]+\n\s+exit 1\n/,
   );
+  // Under pipefail an `echo | grep -q` that matches early can exit 141 and read as "not found".
+  assert.doesNotMatch(step, /echo "\$out" \| grep -q "notes_fts failed"/);
 });
