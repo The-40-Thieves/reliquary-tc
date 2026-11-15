@@ -466,10 +466,14 @@ function localResolutionError<
   const runtimeMissing = resolution.attempts.some(
     (attempt) => attempt.code === "OBTC_EMBEDDER_RUNTIME_MISSING",
   );
-  if (resolution.inSourceCheckout && !runtimeMissing) {
-    const loadFailure = resolution.attempts.find(
-      (attempt) => attempt.route === "source-checkout" && attempt.code !== EMBEDDER_NOT_BUILT,
-    );
+  const loadFailure = resolution.attempts.find(
+    (attempt) =>
+      attempt.route === "embedded" ||
+      (resolution.inSourceCheckout &&
+        attempt.route === "source-checkout" &&
+        attempt.code !== EMBEDDER_NOT_BUILT),
+  );
+  if ((resolution.inSourceCheckout || loadFailure) && !runtimeMissing) {
     return err.embeddingProviderError(
       loadFailure
         ? `${what}: ${loadFailure.target} failed to load: ${loadFailure.error} (if it cannot load on this host, use ollama or a hosted provider instead)`
