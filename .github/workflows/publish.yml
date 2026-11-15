@@ -992,7 +992,7 @@ jobs:
           # vec=on says nothing about full-text. A SQLite built without FTS5 boots, reports vec=on
           # and answers searches from disk scans; this startup line is the only sign (v2.0.0 and
           # v2.0.1 shipped the macOS binaries that way).
-          if echo "$out" | grep -q "notes_fts failed"; then
+          if grep -q "notes_fts failed" <<<"$out"; then
             echo "::error::compiled binary reports notes_fts failed — its SQLite has no working FTS5, so full-text search fell back to disk scans"
             exit 1
           fi
