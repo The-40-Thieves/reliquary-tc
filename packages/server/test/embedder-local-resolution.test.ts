@@ -359,15 +359,42 @@ describe("buildLocalEmbeddingProvider", () => {
     await expect(provider.embed(["a"])).rejects.toThrow("its runtime for this host is missing");
   });
 
-  it("an unbuilt checkout's source-checkout attempt carries the not-built code", async () => {
-    if (REAL_DIST_BUILT) return;
-    const resolution = await resolveLocalEmbedderModule({}, {}, async () => {
-      throw new Error("injected: unresolvable");
+  it("a compiled binary whose embedded embedder fails to load reports the load error", async () => {
+    const resolveModule = async () => ({
+      ok: false as const,
+      attempts: [
+        {
+          route: "embedded" as const,
+          target: "@the-40-thieves/reliquary-tc-embedder-local",
+          ok: false,
+          error: "EACCES: cannot extract the embedded runtime",
+        },
+        { route: "bare-specifier" as const, target: "x", ok: false, error: "boom" },
+      ],
+      inSourceCheckout: false,
     });
-    expect(resolution.attempts.find((a) => a.route === "source-checkout")?.code).toBe(
-      "OBTC_EMBEDDER_NOT_BUILT",
-    );
+    const provider = buildLocalEmbeddingProvider(BASE_CFG, TEST_CTX, resolveModule);
+    try {
+      await provider.embed(["a"]);
+      throw new Error("expected embed() to reject");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain("failed to load: EACCES: cannot extract the embedded runtime");
+      expect(message).not.toContain("is not installed");
+    }
   });
+
+  it.skipIf(REAL_DIST_BUILT)(
+    "an unbuilt checkout's source-checkout attempt carries the not-built code",
+    async () => {
+      const resolution = await resolveLocalEmbedderModule({}, {}, async () => {
+        throw new Error("injected: unresolvable");
+      });
+      expect(resolution.attempts.find((a) => a.route === "source-checkout")?.code).toBe(
+        "OBTC_EMBEDDER_NOT_BUILT",
+      );
+    },
+  );
 
   it("a failed resolution is NOT memoized — a later call that fixes the environment succeeds", async () => {
     let attempt = 0;
