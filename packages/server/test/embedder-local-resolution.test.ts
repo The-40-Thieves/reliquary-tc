@@ -312,6 +312,90 @@ describe("buildLocalEmbeddingProvider", () => {
     }
   });
 
+  // The Docker image ships a BUILT packages/embedder-local, so inSourceCheckout is true there too.
+  it("a built checkout embedder that fails to load is not told to build it", async () => {
+    const resolveModule = async () => ({
+      ok: false as const,
+      attempts: [
+        { route: "bare-specifier" as const, target: "x", ok: false, error: "boom" },
+        {
+          route: "source-checkout" as const,
+          target: "/app/packages/embedder-local/dist/index.js",
+          ok: false,
+          error: "libonnxruntime.so: cannot open shared object file",
+        },
+      ],
+      inSourceCheckout: true,
+    });
+    const provider = buildLocalEmbeddingProvider(BASE_CFG, TEST_CTX, resolveModule);
+    try {
+      await provider.embed(["a"]);
+      throw new Error("expected embed() to reject");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).not.toContain("bun run build");
+      expect(message).not.toContain("npm install");
+      expect(message).toContain("/app/packages/embedder-local/dist/index.js failed to load");
+      expect(message).toContain("libonnxruntime.so: cannot open shared object file");
+      expect(message).toMatch(/use ollama or a hosted provider instead/);
+    }
+  });
+
+  it("a missing runtime is reported as such in a source checkout too", async () => {
+    const resolveModule = async () => ({
+      ok: false as const,
+      attempts: [
+        {
+          route: "source-checkout" as const,
+          target: "x",
+          ok: false,
+          error: "boom",
+          code: "OBTC_EMBEDDER_RUNTIME_MISSING",
+        },
+      ],
+      inSourceCheckout: true,
+    });
+    const provider = buildLocalEmbeddingProvider(BASE_CFG, TEST_CTX, resolveModule);
+    await expect(provider.embed(["a"])).rejects.toThrow("its runtime for this host is missing");
+  });
+
+  it("a compiled binary whose embedded embedder fails to load reports the load error", async () => {
+    const resolveModule = async () => ({
+      ok: false as const,
+      attempts: [
+        {
+          route: "embedded" as const,
+          target: "@the-40-thieves/reliquary-tc-embedder-local",
+          ok: false,
+          error: "EACCES: cannot extract the embedded runtime",
+        },
+        { route: "bare-specifier" as const, target: "x", ok: false, error: "boom" },
+      ],
+      inSourceCheckout: false,
+    });
+    const provider = buildLocalEmbeddingProvider(BASE_CFG, TEST_CTX, resolveModule);
+    try {
+      await provider.embed(["a"]);
+      throw new Error("expected embed() to reject");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain("failed to load: EACCES: cannot extract the embedded runtime");
+      expect(message).not.toContain("is not installed");
+    }
+  });
+
+  it.skipIf(REAL_DIST_BUILT)(
+    "an unbuilt checkout's source-checkout attempt carries the not-built code",
+    async () => {
+      const resolution = await resolveLocalEmbedderModule({}, {}, async () => {
+        throw new Error("injected: unresolvable");
+      });
+      expect(resolution.attempts.find((a) => a.route === "source-checkout")?.code).toBe(
+        "OBTC_EMBEDDER_NOT_BUILT",
+      );
+    },
+  );
+
   it("a failed resolution is NOT memoized — a later call that fixes the environment succeeds", async () => {
     let attempt = 0;
     const stubProvider = {

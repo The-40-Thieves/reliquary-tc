@@ -149,6 +149,8 @@ interface LocalEmbedderModule {
   };
 }
 
+const EMBEDDER_NOT_BUILT = "OBTC_EMBEDDER_NOT_BUILT";
+
 export type LocalEmbedderResolutionRoute =
   | "localModulePath"
   | "embedded"
@@ -268,7 +270,12 @@ export async function resolveLocalEmbedderModule(
     record(
       "source-checkout",
       EMBEDDER_SOURCE_CHECKOUT_PATH,
-      `not built — run "bun run build" in packages/embedder-local (searched for the monorepo root from: ${EMBEDDER_SOURCE_CHECKOUT_WALK_CANDIDATES.join(", ")})`,
+      Object.assign(
+        new Error(
+          `not built — run "bun run build" in packages/embedder-local (searched for the monorepo root from: ${EMBEDDER_SOURCE_CHECKOUT_WALK_CANDIDATES.join(", ")})`,
+        ),
+        { code: EMBEDDER_NOT_BUILT },
+      ),
     );
   }
 
@@ -452,23 +459,31 @@ export function buildLocalEmbeddingProvider(
  *  message alone, and a zero-config npm install lands here on its first start (GH #1524). A source
  *  checkout gets the build command there instead. The embedder child folds the hint into the message too
  *  (child-main.ts), so the hint does not repeat the command. */
-function localResolutionError<T extends { code?: string }>(resolution: {
-  attempts: T[];
-  inSourceCheckout?: boolean;
-}) {
+function localResolutionError<
+  T extends { route?: string; target?: string; error?: string; code?: string },
+>(resolution: { attempts: T[]; inSourceCheckout?: boolean }) {
   const what = `embeddings.provider "local" could not resolve the optional ${LOCAL_EMBEDDER_PACKAGE} package`;
-  if (resolution.inSourceCheckout) {
+  const runtimeMissing = resolution.attempts.some(
+    (attempt) => attempt.code === "OBTC_EMBEDDER_RUNTIME_MISSING",
+  );
+  const loadFailure = resolution.attempts.find(
+    (attempt) =>
+      attempt.route === "embedded" ||
+      (resolution.inSourceCheckout &&
+        attempt.route === "source-checkout" &&
+        attempt.code !== EMBEDDER_NOT_BUILT),
+  );
+  if ((resolution.inSourceCheckout || loadFailure) && !runtimeMissing) {
     return err.embeddingProviderError(
-      `${what}: this source checkout has not built it. Run "bun run build" in packages/embedder-local`,
+      loadFailure
+        ? `${what}: ${loadFailure.target} failed to load: ${loadFailure.error} (if it cannot load on this host, use ollama or a hosted provider instead)`
+        : `${what}: this source checkout has not built it. Run "bun run build" in packages/embedder-local`,
       {
         attempts: resolution.attempts,
         hint: 'see "reliquary-tc doctor" for the full attempt list.',
       },
     );
   }
-  const runtimeMissing = resolution.attempts.some(
-    (attempt) => attempt.code === "OBTC_EMBEDDER_RUNTIME_MISSING",
-  );
   const runtimePackage = `${LOCAL_EMBEDDER_PACKAGE}-${process.platform}-${process.arch}`;
   const installCommand = localEmbedderInstallHint();
   return err.embeddingProviderError(
