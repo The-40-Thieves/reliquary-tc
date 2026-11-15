@@ -322,7 +322,8 @@ takes the run to **287 principal-query evaluations, still zero leaks**.
 ## Local embedder model selection
 
 The default `embeddings.provider` moved from `ollama` (requires a separately-run Ollama server) to
-`local` (a bundled, fully offline dense embedder — see [Embeddings](https://github.com/The-40-Thieves/reliquary-tc/blob/main/docs/src/content/docs/configuration/embeddings.md)).
+`local` (a dense embedder that runs in-process, offline once the model weights are
+downloaded; an opt-in install on npm — see [Embeddings](https://github.com/The-40-Thieves/reliquary-tc/blob/main/docs/src/content/docs/configuration/embeddings.md)).
 Picking which model backs that default was treated as an empirical question, on the same public
 corpus and harness as the rest of this document, not a specs-sheet judgment call.
 
