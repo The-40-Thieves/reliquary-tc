@@ -99,6 +99,7 @@ jobs:
           name: docs-site
           path: ${{ runner.temp }}/dist
       - name: Commit the site to docs-site
+        id: commit
         env:
           SITE: ${{ runner.temp }}/site
           DIST: ${{ runner.temp }}/dist
@@ -122,3 +123,17 @@ jobs:
           fi
           git commit -s -m "docs-site: publish ${GITHUB_SHA::12}"
           git push origin docs-site
+          echo "published=true" >> "$GITHUB_OUTPUT"
+      # Asks the hub repository to pull the new docs-site commit now (its "Combine docs" workflow
+      # listens for docs-updated). Without the token the hub's hourly schedule picks the commit up.
+      - name: Tell the docs hub to sync
+        if: steps.commit.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_HUB_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "DOCS_HUB_DISPATCH_TOKEN is not set; the docs hub syncs on its hourly schedule"
+            exit 0
+          fi
+          gh api --method POST repos/suavecito585/docs/dispatches -f event_type=docs-updated
