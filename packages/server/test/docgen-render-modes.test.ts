@@ -234,6 +234,6 @@ describe("README / ARCHITECTURE carry prose, not a generated tool list", () => {
     for (const name of ["patch_note", "write_note", "append_note", "update_frontmatter"]) {
       expect(readme).toContain(name);
     }
-    expect(readme).toContain("/tools/tool-catalog/");
+    expect(readme).toContain("/reliquary-tc/tools/tool-catalog");
   });
 });
