@@ -234,7 +234,7 @@ describe("doctor: public-url RED cases", () => {
     expect(dns?.status).toBe("fail");
     expect(text(dns)).toMatch(/IPv4/);
     expect(text(dns)).toContain("160.79.104.0/21");
-    expect(text(dns)).toContain("/deployment/hosted-clients/#");
+    expect(text(dns)).toContain("/deployment/hosted-clients#");
   });
 
   it("DNS: a host with no records at all FAILS", async () => {
