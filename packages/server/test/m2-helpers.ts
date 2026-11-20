@@ -28,6 +28,7 @@ export interface M2VaultOptions {
   chunkContext?: boolean;
   /** THE-490/THE-591: config.indexing.streamingWalk, threaded to index_vault. */
   streamingWalk?: boolean;
+  metadataIndex?: { hasFts: boolean; ready: () => boolean };
   /** THE-590: passthrough so a test can wire this the same way cli.ts's run_serve does (e.g. to
    *  recordIngestStats) and observe it fire from a real registry dispatch of index_vault. */
   onIndexVaultComplete?: (vaultId: string, stats: IndexStats) => void;
@@ -97,6 +98,7 @@ export function makeM2Vault(opts: M2VaultOptions = {}): M2Vault {
     representation: buildRepresentationManifest(provider, {}),
     chunkContext: opts.chunkContext,
     streamingWalk: opts.streamingWalk,
+    metadataIndex: opts.metadataIndex,
     onIndexVaultComplete: opts.onIndexVaultComplete,
     onProgress: opts.onProgress,
     onIndexVaultError: opts.onIndexVaultError,
