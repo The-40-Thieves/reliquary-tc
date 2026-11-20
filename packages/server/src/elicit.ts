@@ -152,13 +152,17 @@ export function elicitRequiredError(
       // deliberately swallowed, see above
     }
   }
-  return err.elicitRequired("human confirmation required", {
-    ...details,
-    ...(stateFp !== null ? { state_fp: stateFp } : {}),
-    // The caller the request was raised for: redemption refuses a token minted for any other, and
-    // the CLI mint defaults to "stdio", so the rendered mint command has to name it.
-    ...(typeof ctx.caller === "string" ? { caller: ctx.caller } : {}),
-  });
+  return err.elicitRequired(
+    "This is an approval gate, not a failure. Ask the human to approve, then retry the same call " +
+      "with the minted token; do not use another route to make the change.",
+    {
+      ...details,
+      ...(stateFp !== null ? { state_fp: stateFp } : {}),
+      // The caller the request was raised for: redemption refuses a token minted for any other, and
+      // the CLI mint defaults to "stdio", so the rendered mint command has to name it.
+      ...(typeof ctx.caller === "string" ? { caller: ctx.caller } : {}),
+    },
+  );
 }
 
 /**
