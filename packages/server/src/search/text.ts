@@ -7,8 +7,7 @@ import { err } from "@the-40-thieves/reliquary-tc-shared";
 import type { Database } from "../db/types";
 import type { ReadRefusals } from "../tools/read-refusals";
 import type { WalkReadable } from "../vault/acl-read-filter";
-import { readNote } from "../vault/notes-io";
-import { resolveVaultPath, walkVault } from "../vault/paths";
+import { walkVault } from "../vault/paths";
 import { ftsCandidates } from "./fts";
 import { bm25Score, tokenize } from "./native";
 import { execRegexJob, regexWorkerAvailable, type WorkerHit } from "./regex-worker";
@@ -362,12 +361,17 @@ export function searchTextIndexed(
     if (opts.sub !== undefined && c.path !== opts.sub && !c.path.startsWith(`${opts.sub}/`))
       continue;
     if (!readable(c.path)) continue;
-    let lines: string[];
+    // As in the unindexed path: null is a refused read (counted), ENOENT is a stale index row,
+    // and any other error propagates. What counts as refused is decided in vault/read-refusal.ts.
+    let raw: string | null;
     try {
-      lines = readNote(resolveVaultPath(root, c.path)).raw.split(/\r?\n/);
-    } catch {
-      continue; // stale index row (file vanished mid-query) — the sweep reconverges it
+      raw = opts.refusals.read(root, c.path);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw e;
     }
+    if (raw === null) continue;
+    const lines = raw.split(/\r?\n/);
     // bm25() is negative-better; flip so higher-is-better like the JS scorer's ordering.
     const score = -c.rank;
     for (let i = 0; i < lines.length; i++) {
