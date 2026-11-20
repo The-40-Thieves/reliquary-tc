@@ -31,8 +31,11 @@ your change before you start.
   matches. The procedure is `.claude/skills/verify-ticket-premise/SKILL.md` (plain markdown, any
   agent can follow it). If the premise no longer holds, stop and report that instead of coding.
 - **Public repo.** Put no private tracker ids or links (a `THE-` id followed by a number, a
-  Linear URL) in commits, pull request text, code, comments or `changes/` fragments.
-  `bun run check:public-text` enforces it. A GitHub issue number (`Refs #123`) is fine.
+  Linear URL) in commits, pull request text, code, comments or `changes/` fragments. A GitHub
+  issue number (`Refs #123`) is fine. `bun run check:public-text` covers only part of this: it
+  refuses an id in tracked Markdown, the two manifests and the CLI's printed text, and it fails
+  when the count of ids in code comments rises. It does not read commit messages, pull request
+  text or `changes/` fragments, so check those yourself before you push.
 - **One pull request per task**, on its own branch from `origin/main`. Sign off every commit
   (`git commit -s`); the DCO check rejects unsigned commits.
 - **Add a release-note fragment**: `changes/<slug>.md`, format in `changes/README.md`. Do not
@@ -44,15 +47,20 @@ your change before you start.
   `.claude/skills/gates/SKILL.md`) and run the ones your change can affect. Two that catch most
   changes: `check:comment-style` counts files with 120 or more comment lines, and biome refuses
   a file over 700 lines.
-- **Never edit a generated file.** The list and each file's regenerate command are in
-  `.claude/generated-paths.txt`.
+- **Generated files are regenerated, not edited.** The list and each file's regenerate command
+  are in `.claude/generated-paths.txt`. If a generated file looks wrong, fix its source and
+  rerun that command.
 - **Local tests are the diff; the full suite is CI.** Run the test files you touched plus
   `bun run test:related` in `packages/server`. Do not run the whole suite locally.
-- **Never pipe a gate through `tail` or `head`**: the exit code then reports the pipe, not the
-  gate. Redirect to a log file and check the exit code separately.
-- **Before pushing**, merge `origin/main` into your branch and resolve conflicts by hand. Never
-  force-push, never `git stash` (the stash is shared across worktrees; use a temporary commit),
-  and never kill processes by name pattern.
+- **Run each gate unpiped.** A pipe through `tail` or `head` makes the exit code report the
+  pipe, not the gate. Redirect the output to a log file and check the exit code separately.
+- **Before pushing**, merge `origin/main` into your branch and resolve conflicts by hand. If the
+  `ledger` tool is on your `PATH`, run `ledger replay` as its own command after the merge, then
+  push as a separate command; a cloud VM without it skips that step.
+- **Three habits to avoid.** Use a temporary commit instead of `git stash` (the stash is shared
+  across worktrees). Stop a process by its id instead of by name pattern (a pattern hits other
+  runs). If a push is rejected, merge again instead of force-pushing. If one of these seems
+  unavoidable, stop and ask the user.
 - **Report back** with the pull request number, the head SHA, what was done and how each part
   was proven, test counts, the failing-first output, and anything done differently from the
   task brief.
@@ -69,6 +77,7 @@ curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.4"
 export PATH="$BUN_INSTALL/bin:$PATH"
 bun --version   # must print 1.4.4
 bun install --frozen-lockfile --ignore-scripts   # a plain install fails on the better-sqlite3 build script
+bun run prepare   # --ignore-scripts skipped it: registers the regen merge driver and the DCO sign-off hook
 ```
 
 Run these before proposing a change:
