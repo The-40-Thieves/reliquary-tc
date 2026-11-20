@@ -448,7 +448,7 @@ describe("hitl: conditional confirmation", () => {
     });
     const input = { path: "a.md", mode: "overwrite" };
     expect(() => requireConfirmation(ctx(), "write_note", input, false)).not.toThrow();
-    expect(() => requireConfirmation(ctx(), "write_note", input, true)).toThrow(/confirm/i);
+    expect(() => requireConfirmation(ctx(), "write_note", input, true)).toThrow(/approval gate/i);
     const token = issueElicitToken(db, {
       vaultId: "v1",
       toolName: "write_note",

@@ -376,7 +376,11 @@ describe("errorToResult (mcp/server.ts): both throw sites render a complete CLI 
       expect((structured.details as { vault?: string }).vault).toBe("v1");
 
       const text = textOf(res);
-      expect(text).toContain("Error [elicit_required]: human confirmation required");
+      expect(text).toContain(
+        "Error [elicit_required]: This is an approval gate, not a failure. " +
+          "Ask the human to approve, then retry the same call with the minted token; " +
+          "do not use another route to make the change.",
+      );
       expect(text).toContain(`--hash ${argsHash}`);
       expect(text).toContain("--tool conditional_write");
       expect(text).toContain("--vault v1");
