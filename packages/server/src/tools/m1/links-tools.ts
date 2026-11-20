@@ -208,7 +208,7 @@ function* planLinkRewriteSteps(
   grantedScopes: Iterable<string>,
   input: z.infer<typeof RewriteInput>,
 ): ScanSteps<{
-  edits: Array<{ rel: string; text: string; count: number; prevHash: string }>;
+  edits: Array<{ rel: string; text: string; count: number }>;
   totalLinks: number;
   warnings: RewriteWarning[];
 }> {
@@ -222,11 +222,11 @@ function* planLinkRewriteSteps(
   const fromRes = resolveTarget(index, input.from_target);
   const fromPath = fromRes.resolved ? fromRes.target_path : null;
   const fromLiteral = normTarget(input.from_target);
-  const edits: Array<{ rel: string; text: string; count: number; prevHash: string }> = [];
+  const edits: Array<{ rel: string; text: string; count: number }> = [];
   const warnings: RewriteWarning[] = [];
   let totalLinks = 0;
   for (const p of paths) {
-    const { raw, hash } = readNote(resolveVaultPath(root, p));
+    const { raw } = readNote(resolveVaultPath(root, p));
     const rw = rewriteLinks(raw, (target, kind) => {
       if (!input.include_embeds && kind === "embed") return null;
       const match = fromPath
@@ -236,7 +236,7 @@ function* planLinkRewriteSteps(
     });
     for (const w of rw.warnings) warnings.push({ path: p, ...w });
     if (rw.count > 0) {
-      edits.push({ rel: p, text: rw.text, count: rw.count, prevHash: hash });
+      edits.push({ rel: p, text: rw.text, count: rw.count });
       totalLinks += rw.count;
     }
     yield;
@@ -460,24 +460,17 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
           : null,
       handler: async (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
-        const { edits, totalLinks, warnings } = await drainYielding(
-          planLinkRewriteSteps(v.root, ctx.acl, ctx.grantedScopes, input),
-          ctx.signal,
-        );
+        // Only the preview yields. A real run plans and writes in one synchronous turn: a note
+        // created or changed during a yield would leave the plan resolving links against a stale
+        // index, and no per-note hash check can see a note that did not exist when it was scanned.
+        const plan = planLinkRewriteSteps(v.root, ctx.acl, ctx.grantedScopes, input);
+        const { edits, totalLinks, warnings } = input.dry_run
+          ? await drainYielding(plan, ctx.signal)
+          : drainSteps(plan);
         const mdConfig = deps.memoryDefense?.(v.id) ?? MEMORY_DEFENSE_OFF;
 
         if (!input.dry_run) {
           for (const e of edits) enforcePathAcl(ctx.acl, "write", e.rel, v.root, ctx.grantedScopes);
-          // Planning yielded: refuse every stale edit before confirmation or any write.
-          for (const e of edits)
-            checkCas({
-              ctx,
-              root: v.root,
-              rel: e.rel,
-              prevHash: e.prevHash,
-              currentHash: readNote(resolveVaultPath(v.root, e.rel)).hash,
-              message: "note changed while the link rewrite was being planned",
-            });
           requireConfirmation(ctx, "rewrite_link", input, true, {
             from_target: input.from_target,
             to_target: input.to_target,
@@ -545,8 +538,11 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
         if (!ex.exists || ex.type === "folder")
           throw err.noteNotFound("note not found", { path: rel });
 
+        // As in rewrite_link: only the preview yields, so a real run never prunes a link whose
+        // target was created after the index was built.
+        const walk = readableNotesSteps(v.root, ctx.acl, ctx.grantedScopes);
         const index = buildVaultIndex(
-          await drainYielding(readableNotesSteps(v.root, ctx.acl, ctx.grantedScopes), ctx.signal),
+          input.dry_run ? await drainYielding(walk, ctx.signal) : drainSteps(walk),
         );
         const { raw, hash } = readNote(abs);
         checkCas({
