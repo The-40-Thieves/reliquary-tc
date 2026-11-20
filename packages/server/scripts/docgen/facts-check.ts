@@ -216,7 +216,7 @@ export function factRules(goldenSetSize: number, domainCount: number): FactRule[
         // Three-plus digits, as below: "the 4 registered tools in cli.ts" is a legal sub-count.
         /(?<![A-Za-z0-9.-])(\d{3,})\s+registered\s+tools\b/i,
         /\bregisters\s+(\d{3,})\s+capabilities\b/i,
-        /\btools\b[^\n]*?\ba\s+wall\s+of\s+(\d+)\b/i,
+        /\btools\b[^\n]*?\ba\s+wall\s+of\s+(\d{3,})\b/i,
         new RegExp(`${STANDALONE}(\\d+)\\s+governed\\s+capabilities`, "i"),
         // SKILLS.md said "143 capabilities across 31 domains" and "143 tools / 31 domains" for a
         // while after the real surface moved on; the file was not swept and the phrasings did not
