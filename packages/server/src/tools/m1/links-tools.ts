@@ -200,6 +200,12 @@ const RewriteInput = z
   })
   .strict();
 
+/** Refuse a path that is missing or names a folder. */
+function requireNote(abs: string, rel: string): void {
+  const ex = noteExists(abs);
+  if (!ex.exists || ex.type === "folder") throw err.noteNotFound("note not found", { path: rel });
+}
+
 /** The edits a `rewrite_link` call would make, computed the same way for the dry run, the real run
  *  and the confirmation's target fingerprint. */
 function* planLinkRewriteSteps(
@@ -283,9 +289,7 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
         const rel = normalizeVaultPath(input.path);
         const abs = resolveVaultPath(v.root, rel);
         enforcePathAcl(ctx.acl, "read", rel, v.root, ctx.grantedScopes);
-        const ex = noteExists(abs);
-        if (!ex.exists || ex.type === "folder")
-          throw err.noteNotFound("note not found", { path: rel });
+        requireNote(abs, rel);
 
         const index = buildVaultIndex(
           await drainYielding(readableNotesSteps(v.root, ctx.acl, ctx.grantedScopes), ctx.signal),
@@ -358,9 +362,7 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
         const rel = normalizeVaultPath(input.path);
         const abs = resolveVaultPath(v.root, rel);
         enforcePathAcl(ctx.acl, "read", rel, v.root, ctx.grantedScopes);
-        const ex = noteExists(abs);
-        if (!ex.exists || ex.type === "folder")
-          throw err.noteNotFound("note not found", { path: rel });
+        requireNote(abs, rel);
 
         const warnings = new ScanWarnings();
         const skip = offsetOf(input.cursor);
@@ -534,9 +536,7 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
         const abs = resolveVaultPath(v.root, rel);
         enforcePathAcl(ctx.acl, "read", rel, v.root, ctx.grantedScopes);
         requireContentRead(ctx, v.root, rel);
-        const ex = noteExists(abs);
-        if (!ex.exists || ex.type === "folder")
-          throw err.noteNotFound("note not found", { path: rel });
+        requireNote(abs, rel);
 
         // As in rewrite_link: only the preview yields, so a real run never prunes a link whose
         // target was created after the index was built.
