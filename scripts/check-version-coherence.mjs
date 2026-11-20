@@ -184,6 +184,10 @@ console.log(`\nOK: all ${sources.length} version strings agree at ${distinct[0]}
     ["packages/server/README.md", /Shipped\D+v(\d+\.\d+\.\d+)/],
     ["docs/src/content/docs/index.md", /v(\d+\.\d+\.\d+) is the current release/],
     ["docs/src/content/docs/roadmap.md", /Shipped \(current: v(\d+\.\d+\.\d+)\)/],
+    [
+      "docs/src/content/docs/roadmap.md",
+      /^description: What has shipped through v(\d+\.\d+\.\d+),/m,
+    ],
     // THE-598: docs/wiki/Home.md's "Shipped — **v1.10.0**" sat nine lines below a generated block
     // saying 1.11.0 with NO gate catching it — this file was never anchored here at all. The
     // literal `Shipped v(\d+\.\d+\.\d+)` pattern above would not have matched even if it had been
