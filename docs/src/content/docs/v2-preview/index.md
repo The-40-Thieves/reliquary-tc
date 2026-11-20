@@ -31,9 +31,12 @@ The earlier substrate proposals remain outside the current line:
   the PIT score calibration it would need) remains a substrate question, taken up
   only with a concrete proposal.
 
-Dark v1.x mechanisms (rerankers, learned sparse, query decomposition, the query
-class router, convex fusion) already ship — each is behind a flag with a
-one-command re-test against the golden-set harness, and re-enters whenever a
+Dark v1.x mechanisms are not substrate items either, and they are not equally
+available. Rerankers and the query class router ship behind config flags, off by
+default. Learned sparse and ColBERT are wired but need a multi-vector encoder
+that a default install does not provide. Convex fusion and query decomposition
+are reachable only from the evaluation harness. `docs/DARK_MECHANISMS.md` is the
+inventory, with each mechanism's recorded result; any of them re-enters when a
 larger eval set or better serving stack changes its measured verdict.
 
 These are previews of direction, not commitments of schedule or a release number.
