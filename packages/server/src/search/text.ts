@@ -361,6 +361,8 @@ export function searchTextIndexed(
     if (opts.sub !== undefined && c.path !== opts.sub && !c.path.startsWith(`${opts.sub}/`))
       continue;
     if (!readable(c.path)) continue;
+    // As in the unindexed path: null is a refused read (counted), ENOENT is a stale index row,
+    // and any other error propagates. What counts as refused is decided in vault/read-refusal.ts.
     let raw: string | null;
     try {
       raw = opts.refusals.read(root, c.path);

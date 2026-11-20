@@ -1,5 +1,5 @@
 import { unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { err } from "@the-40-thieves/reliquary-tc-shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ftsCandidates } from "../src/search/fts";
@@ -16,7 +16,7 @@ vi.mock("../src/vault/notes-io", async (importOriginal) => {
   return {
     ...actual,
     readNote: vi.fn((abs: string) => {
-      if (abs.endsWith("b.md") && failure.error) throw failure.error;
+      if (basename(abs) === "b.md" && failure.error) throw failure.error;
       return actual.readNote(abs);
     }),
   };
@@ -124,8 +124,13 @@ it("propagates unexpected indexed note read errors", async () => {
   const v = await indexedVault();
   failure.error = Object.assign(new Error("unexpected read failure"), { code: "EIO" });
   const refusals = new ReadRefusals();
-  expect(() =>
-    searchTextIndexed(v.db, "test", v.root, { query: "zebra", limit: 100, refusals }),
-  ).toThrow(failure.error);
+  let thrown: unknown;
+  try {
+    searchTextIndexed(v.db, "test", v.root, { query: "zebra", limit: 100, refusals });
+  } catch (e) {
+    thrown = e;
+  }
+  // The same object, so the code survives too: toThrow(error) compares the message only.
+  expect(thrown).toBe(failure.error);
   expect(refusals.count).toBe(0);
 });
