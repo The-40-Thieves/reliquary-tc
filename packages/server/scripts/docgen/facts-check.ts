@@ -213,6 +213,10 @@ export function factRules(goldenSetSize: number, domainCount: number): FactRule[
       // the wild; each one was added for an observed leak.
       value: null,
       patterns: [
+        // Three-plus digits, as below: "the 4 registered tools in cli.ts" is a legal sub-count.
+        /(?<![A-Za-z0-9.-])(\d{3,})\s+registered\s+tools\b/i,
+        /\bregisters\s+(\d{3,})\s+capabilities\b/i,
+        /\btools\b[^\n]*?\ba\s+wall\s+of\s+(\d+)\b/i,
         new RegExp(`${STANDALONE}(\\d+)\\s+governed\\s+capabilities`, "i"),
         // SKILLS.md said "143 capabilities across 31 domains" and "143 tools / 31 domains" for a
         // while after the real surface moved on; the file was not swept and the phrasings did not
@@ -316,6 +320,7 @@ export function narrativeFiles(repoRoot: string): string[] {
   };
   return [
     "README.md",
+    "TREE.md",
     "ARCHITECTURE.md",
     "SECURITY.md",
     // Agent-facing guide, shipped in the package; it restated the surface size in three places.
@@ -328,6 +333,7 @@ export function narrativeFiles(repoRoot: string): string[] {
     "CONTRIBUTING.md",
     "packages/server/README.md",
     ...topLevelDocs(),
+    ...walk("docs/adr"),
     ...walk("docs/wiki"),
     ...walk("docs/src/content"),
   ];
@@ -363,6 +369,9 @@ const FLOOR = { files: 20, lines: 500, patternMatches: 3, sdkMentions: 2 } as co
  * requiring the rule to flag each one is the existence floor for a gate whose success is silence.
  */
 const CANARIES = [
+  "a 3-meta-tool facade fronts 999 registered tools",
+  "reliquary-tc registers 999 capabilities",
+  "advertises just five tools instead of a wall of 999",
   "the 999-tool surface",
   "999 governed capabilities",
   "999 capabilities across 31 domains",
