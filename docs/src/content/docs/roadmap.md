@@ -1,7 +1,10 @@
 ---
 title: Roadmap
-description: What has shipped through v1.8, and what remains deferred or out of scope.
+description: What has shipped through v2.0.1, and what remains deferred or out of scope.
 ---
+
+The 2.x line is **Reliquary-TC**, renamed from obsidian-tc and licensed under
+**Apache-2.0**. Releases through 1.34.x retain AGPL-3.0-only.
 
 ## Shipped (current: v2.0.1)
 
@@ -30,6 +33,18 @@ CloudEvents, rate limiter, 8-triple native prebuilds, this docs site):
   (`metrics`, `gaps`, `prefetch`, `reflect`, `forget`, `citation-infer`,
   `contribution-report`, `activation-recompute`, `cluster`); and a vec0 index with
   a per-vault partition key, rebuilt in place from stored embeddings.
+- **Local semantic search.** A fresh `reliquary-tc <vault>` selects the local
+  embedder and supplies its cache directory. Docker, the `.mcpb` bundle and
+  standalone binaries include it; npm users install
+  `@the-40-thieves/reliquary-tc-embedder-local` separately. First use downloads and
+  verifies pinned model weights, then inference runs locally without a separate
+  embeddings service. A config file using the local provider must set `cacheDir`.
+- **Remote access with OAuth.** The bundled authorization server ships authorize,
+  token, refresh and revoke flows, passkey sign-in and RFC 8414 metadata. HTTP and
+  the authorization server remain **opt-in**: enable `transports.http.enabled`
+  and `auth.as.enabled`, with `auth.mode: jwt`, `auth.as.issuer` and `auth.resource`.
+  Dynamic client registration is separately **opt-in** via
+  `auth.as.dynamicRegistration`; the hardened profile forces it off.
 - CycloneDX SBOMs, generated per package on release (`npm sbom`) and uploaded as
   build artifacts (non-blocking).
 
@@ -42,13 +57,9 @@ CloudEvents, rate limiter, 8-triple native prebuilds, this docs site):
 Themes under active work, in no particular order — see the tool reference and
 configuration docs for what already ships today:
 
-- **Zero-config semantic search.** Lexical search and every note tool already work
-  with nothing but a vault path; closing the gap so semantic and graph-seeded
-  retrieval work out of the box too, without standing up a separate embeddings
-  backend first.
-- **Remote access with OAuth.** The HTTP transport is opt-in today, gated by
-  signed-JWT auth; an OAuth authorization-server flow is in design so a remote
-  agent can authenticate without a hand-provisioned token.
+- **Zero-config semantic search.** The local backend now ships, but npm still
+  needs the separate embedder install above. Semantic and graph-seeded retrieval
+  with only a vault path is not yet universal across install paths.
 - **Broader client coverage.** Verifying and documenting behavior across more MCP
   clients, beyond the ones already covered in the compatibility matrix.
 - **Memory you own, in Markdown.** The experiential store already lives under the
@@ -60,7 +71,7 @@ configuration docs for what already ships today:
 - A per-scope HITL-raise (today per-scope overrides only tighten; isolate unattended
   automation on a second instance instead).
 
-## Out of scope for the v1.x line
+## Out of scope for the current line
 
 - The **typed-atom MemIR substrate** (claim atoms, bi-temporal
   `authoritative_claims`) — a downstream engine-build phase, parked with an explicit
