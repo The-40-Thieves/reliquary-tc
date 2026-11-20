@@ -3,8 +3,10 @@ title: Roadmap
 description: What has shipped through v2.0.1, and what remains deferred or out of scope.
 ---
 
-The 2.x line is **Reliquary-TC**, renamed from obsidian-tc and licensed under
-**Apache-2.0**. Releases through 1.34.x retain AGPL-3.0-only.
+The 2.x line is **Reliquary-TC**: the project was renamed in 2.0 and is licensed
+under **Apache-2.0**. Releases through 1.34.x retain AGPL-3.0-only. The earlier
+names keep working through 2.x; see the
+[upgrade guide](https://github.com/The-40-Thieves/reliquary-tc/blob/main/docs/UPGRADING-2.0.md).
 
 ## Shipped (current: v2.0.1)
 

@@ -3,7 +3,7 @@ title: V2 Preview
 description: Earlier substrate proposals, distinct from the released 2.x line.
 ---
 
-The 2.x line has shipped: Reliquary-TC is the new name for obsidian-tc, under
+The 2.x line has shipped: the project was renamed to Reliquary-TC in 2.0, under
 Apache-2.0, with v2.0.1 the first published release. The "V2" in this page's
 title refers to a next substrate generation, not the released 2.x line.
 
