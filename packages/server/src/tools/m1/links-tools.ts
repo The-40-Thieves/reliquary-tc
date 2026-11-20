@@ -20,7 +20,7 @@ import {
 import { DEFAULT_SCAN_LIMIT, nextOffsetCursor, offsetOf } from "../../util/paginate";
 import { ResponseFormatInput, resolveResponseFormat } from "../../util/response-format";
 import { capWarningsOut } from "../../util/scan-caps";
-import { drainYielding } from "../../util/scan-steps";
+import { drainSteps, drainYielding, type ScanSteps } from "../../util/scan-steps";
 import { enforcePathAcl } from "../../vault/acl-path";
 import { callerMayReadNote, checkCas, requireContentRead } from "../../vault/cas";
 import { requireConfirmation } from "../../vault/hitl";
@@ -39,7 +39,7 @@ import {
 import {
   isExternal,
   originOf,
-  readableNotes,
+  readableNotesSteps,
   scanBacklinksSteps,
   scanUnresolvedSteps,
 } from "../wiki-scan";
@@ -202,29 +202,31 @@ const RewriteInput = z
 
 /** The edits a `rewrite_link` call would make, computed the same way for the dry run, the real run
  *  and the confirmation's target fingerprint. */
-function planLinkRewrite(
+function* planLinkRewriteSteps(
   root: string,
   acl: FolderAcl | undefined,
   grantedScopes: Iterable<string>,
   input: z.infer<typeof RewriteInput>,
-): {
-  edits: Array<{ rel: string; text: string; count: number }>;
+): ScanSteps<{
+  edits: Array<{ rel: string; text: string; count: number; prevHash: string }>;
   totalLinks: number;
   warnings: RewriteWarning[];
-} {
+}> {
   const sub = input.folder ? normalizeVaultPath(input.folder) : undefined;
   // A note the caller may not read is neither scanned nor named, so a match in it is never reported.
   const readable = (rel: string): boolean => callerMayReadNote({ acl, grantedScopes }, root, rel);
-  const paths = readableNotes(root, acl, grantedScopes, sub).filter(readable);
-  const index = buildVaultIndex(readableNotes(root, acl, grantedScopes).filter(readable));
+  const paths = (yield* readableNotesSteps(root, acl, grantedScopes, sub)).filter(readable);
+  const index = buildVaultIndex(
+    (yield* readableNotesSteps(root, acl, grantedScopes)).filter(readable),
+  );
   const fromRes = resolveTarget(index, input.from_target);
   const fromPath = fromRes.resolved ? fromRes.target_path : null;
   const fromLiteral = normTarget(input.from_target);
-  const edits: Array<{ rel: string; text: string; count: number }> = [];
+  const edits: Array<{ rel: string; text: string; count: number; prevHash: string }> = [];
   const warnings: RewriteWarning[] = [];
   let totalLinks = 0;
   for (const p of paths) {
-    const raw = readNote(resolveVaultPath(root, p)).raw;
+    const { raw, hash } = readNote(resolveVaultPath(root, p));
     const rw = rewriteLinks(raw, (target, kind) => {
       if (!input.include_embeds && kind === "embed") return null;
       const match = fromPath
@@ -234,9 +236,10 @@ function planLinkRewrite(
     });
     for (const w of rw.warnings) warnings.push({ path: p, ...w });
     if (rw.count > 0) {
-      edits.push({ rel: p, text: rw.text, count: rw.count });
+      edits.push({ rel: p, text: rw.text, count: rw.count, prevHash: hash });
       totalLinks += rw.count;
     }
+    yield;
   }
   return { edits, totalLinks, warnings };
 }
@@ -275,7 +278,7 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
         .strict(),
       outputSchema: GetOutgoingLinksOutput,
       requiredScopes: ["read:notes"],
-      handler: (input, ctx) => {
+      handler: async (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
         const rel = normalizeVaultPath(input.path);
         const abs = resolveVaultPath(v.root, rel);
@@ -284,7 +287,9 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
         if (!ex.exists || ex.type === "folder")
           throw err.noteNotFound("note not found", { path: rel });
 
-        const index = buildVaultIndex(readableNotes(v.root, ctx.acl, ctx.grantedScopes));
+        const index = buildVaultIndex(
+          await drainYielding(readableNotesSteps(v.root, ctx.acl, ctx.grantedScopes), ctx.signal),
+        );
         const warnings = new ScanWarnings();
         const links = warnings
           .links(readNote(abs).raw, rel)
@@ -448,21 +453,31 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
         root
           ? (fingerprintTargets(
               root,
-              planLinkRewrite(root, ctx.acl, ctx.grantedScopes, input).edits.map((e) => e.rel),
+              drainSteps(planLinkRewriteSteps(root, ctx.acl, ctx.grantedScopes, input)).edits.map(
+                (e) => e.rel,
+              ),
             ) ?? argsHash("state", []))
           : null,
-      handler: (input, ctx) => {
+      handler: async (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
-        const { edits, totalLinks, warnings } = planLinkRewrite(
-          v.root,
-          ctx.acl,
-          ctx.grantedScopes,
-          input,
+        const { edits, totalLinks, warnings } = await drainYielding(
+          planLinkRewriteSteps(v.root, ctx.acl, ctx.grantedScopes, input),
+          ctx.signal,
         );
         const mdConfig = deps.memoryDefense?.(v.id) ?? MEMORY_DEFENSE_OFF;
 
         if (!input.dry_run) {
           for (const e of edits) enforcePathAcl(ctx.acl, "write", e.rel, v.root, ctx.grantedScopes);
+          // Planning yielded: refuse every stale edit before confirmation or any write.
+          for (const e of edits)
+            checkCas({
+              ctx,
+              root: v.root,
+              rel: e.rel,
+              prevHash: e.prevHash,
+              currentHash: readNote(resolveVaultPath(v.root, e.rel)).hash,
+              message: "note changed while the link rewrite was being planned",
+            });
           requireConfirmation(ctx, "rewrite_link", input, true, {
             from_target: input.from_target,
             to_target: input.to_target,
@@ -520,7 +535,7 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
       requiredScopes: ["write:notes"],
       // THE-824: see rewrite_link above.
       conditionallyDestructive: true,
-      handler: (input, ctx) => {
+      handler: async (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
         const rel = normalizeVaultPath(input.path);
         const abs = resolveVaultPath(v.root, rel);
@@ -530,6 +545,9 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
         if (!ex.exists || ex.type === "folder")
           throw err.noteNotFound("note not found", { path: rel });
 
+        const index = buildVaultIndex(
+          await drainYielding(readableNotesSteps(v.root, ctx.acl, ctx.grantedScopes), ctx.signal),
+        );
         const { raw, hash } = readNote(abs);
         checkCas({
           ctx,
@@ -540,7 +558,6 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
           message: "note changed since prev_hash",
         });
 
-        const index = buildVaultIndex(readableNotes(v.root, ctx.acl, ctx.grantedScopes));
         const { text, removed } = pruneHubLinks(raw, index, {
           removeUnresolved: input.remove_unresolved,
           removeDuplicates: input.remove_duplicates,

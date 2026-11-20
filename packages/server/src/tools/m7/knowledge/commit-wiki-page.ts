@@ -66,7 +66,7 @@ import {
   WikiPageSpec,
   WikiPatchSpec,
 } from "./wiki-changeset";
-import { collectIdentityEvidence } from "./wiki-evidence";
+import { collectIdentityEvidenceSync } from "./wiki-evidence";
 import { assertWikiPagePath, rawPathFilter } from "./wiki-folder";
 import { regenerateWikiPages, type WikiGenerateEnv } from "./wiki-generated";
 import { buildLinkMap } from "./wiki-link-map";
@@ -565,7 +565,7 @@ export function createCommitWikiPageTool(
       // identity match (name, alias, id) on another page refuses the commit, as the first check does.
       if (!input.allow_duplicate) {
         const fresh = [
-          ...collectIdentityEvidence(scope, topic, {
+          ...collectIdentityEvidenceSync(scope, topic, {
             folder: undefined,
             isExcluded: exclusion.isExcluded,
             ignore: rawPathFilter(v.rawFolders, v.caseInsensitive),

@@ -6,10 +6,11 @@
 //
 // READ-ONLY, and ACL-scoped by construction: only notes the caller's read ACL admits are walked,
 // so a denied note is indistinguishable from a missing one.
+import { drainSteps, drainYielding, type ScanSteps } from "../../../util/scan-steps";
 import { buildVaultIndex, extractNoteLinks, resolveTarget } from "../../../vault/links";
 import type { ReadRefusals } from "../../read-refusals";
 import { ScanWarnings } from "../../scan-warnings";
-import { readableNotes, type ScanScope } from "../../wiki-scan";
+import { readableNotesSteps, type ScanScope } from "../../wiki-scan";
 import { isGeneratedWikiPath } from "./wiki-folder";
 
 export type EvidenceKind =
@@ -121,7 +122,7 @@ export interface IdentityScan {
  * evidence for a page inside it.
  */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing (score 82); split when next modified
-export function collectIdentityEvidence(
+function* collectIdentityEvidenceSteps(
   scope: ScanScope,
   topicRaw: string,
   opts: {
@@ -132,12 +133,13 @@ export function collectIdentityEvidence(
     ignore?: (rel: string) => boolean;
     /** The caller's refusal counter, so a note refused by two walks of one call counts once. */
     refusals: ReadRefusals;
+    signal?: AbortSignal | undefined;
   },
-): IdentityScan {
+): ScanSteps<IdentityScan> {
   const topic = cleanTopic(topicRaw);
   const topicKey = looseKey(topic);
   const topicQids = new Set(qidsIn(topicRaw));
-  const all = readableNotes(scope.root, scope.acl, scope.grantedScopes);
+  const all = yield* readableNotesSteps(scope.root, scope.acl, scope.grantedScopes);
   const index = buildVaultIndex(all);
   const folderPrefix = opts.folder ? `${opts.folder.replace(/\/+$/, "")}/` : "";
   const inFolder = (p: string): boolean => folderPrefix === "" || p.startsWith(folderPrefix);
@@ -165,6 +167,7 @@ export function collectIdentityEvidence(
     const base = (p.includes("/") ? p.slice(p.lastIndexOf("/") + 1) : p).replace(/\.md$/i, "");
     if (looseKey(base) === topicKey && !candidates.get(p)?.evidence.some((e) => e.kind === "path"))
       add(p, { kind: "name_variant", detail: base });
+    yield;
   }
 
   const warnings = new ScanWarnings(opts.refusals);
@@ -174,6 +177,7 @@ export function collectIdentityEvidence(
   const mentions: string[] = [];
   const linkers: string[] = [];
   for (const rel of all) {
+    yield;
     if (generated(rel) || ignored(rel)) continue;
     const raw = warnings.refusals.read(scope.root, rel);
     if (raw === null) {
@@ -226,4 +230,17 @@ export function collectIdentityEvidence(
   }
   for (const path of refused) candidates.delete(path);
   return { candidates, scanned: all.length, warnings, notes: all, mentions, linkers };
+}
+
+export function collectIdentityEvidence(
+  ...args: Parameters<typeof collectIdentityEvidenceSteps>
+): Promise<IdentityScan> {
+  return drainYielding(collectIdentityEvidenceSteps(...args), args[2].signal);
+}
+
+/** The final duplicate check and the writes it guards must stay in one synchronous turn. */
+export function collectIdentityEvidenceSync(
+  ...args: Parameters<typeof collectIdentityEvidenceSteps>
+): IdentityScan {
+  return drainSteps(collectIdentityEvidenceSteps(...args));
 }
