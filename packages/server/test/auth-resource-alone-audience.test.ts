@@ -1,59 +1,98 @@
-// PINS today's behaviour of `auth.resource` WITHOUT `auth.authorizationServers` on a JWKS-backed jwt
-// server, so the planned alignment is a visible change in this file rather than a silent one.
+// `auth.resource` WITHOUT `auth.authorizationServers` on a JWKS-backed jwt server.
 //
-// The config schema (server.schema.ts) counts `resource` alone as satisfying "bind an audience",
-// but the verifier (protected-resource.ts effectiveAudience) uses `resource` as the audience only
-// when Protected Resource Metadata is complete (authorizationServers too). So the config loads and
-// no `aud` is enforced; the missing-audience deprecation is the only signal. In the next minor
-// release, when that deprecation becomes a startup error, the two are to be aligned and the
-// expectations below flip (the schema or the verifier changes).
+// The config schema counts `resource` alone as satisfying "bind an audience". The verifier now
+// agrees: with a JWKS key source and no explicit `auth.audience`, `resource` is the audience, so a
+// token the same issuer minted for another service is refused. `auth.allowMissingAudience: true`
+// keeps the old behaviour, and a server with only a shared secret is not affected.
 import { ServerConfigSchema } from "@the-40-thieves/reliquary-tc-shared";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { describe, expect, it } from "vitest";
 import { buildJwtVerifier } from "../src/auth/jwt-boot";
 import { effectiveAudience, jwksWithoutAudience } from "../src/auth/protected-resource";
 
+const RESOURCE = "https://r.example/mcp";
 const parse = (a: Record<string, unknown>) =>
   ServerConfigSchema.parse({
     vaults: [{ id: "v1", path: "/tmp/v1" }],
     auth: { mode: "jwt", ...a },
   });
 
-describe("auth.resource alone (no authorizationServers) with a JWKS: current behaviour", () => {
-  it("the schema accepts it as if an audience were bound", async () => {
-    const { publicKey } = await generateKeyPair("EdDSA", { crv: "Ed25519" });
-    const jwks = { keys: [{ ...(await exportJWK(publicKey)), kid: "k1", alg: "EdDSA" }] };
-    expect(() => parse({ jwks, resource: "https://r.example/mcp" })).not.toThrow();
+async function keyed() {
+  const { publicKey, privateKey } = await generateKeyPair("EdDSA", { crv: "Ed25519" });
+  const jwks = { keys: [{ ...(await exportJWK(publicKey)), kid: "k1", alg: "EdDSA" }] };
+  const mint = (aud?: string) => {
+    const jwt = new SignJWT({ sub: "a" }).setProtectedHeader({ alg: "EdDSA", kid: "k1" });
+    if (aud !== undefined) jwt.setAudience(aud);
+    return jwt.setExpirationTime("5m").sign(privateKey);
+  };
+  return { jwks, mint };
+}
+const verifier = (a: Record<string, unknown>) => {
+  const v = buildJwtVerifier(parse(a).auth);
+  if (!v) throw new Error("no verifier built");
+  return v;
+};
+
+describe("auth.resource alone (no authorizationServers) with a JWKS", () => {
+  it.each([
+    ["an inline jwks", { jwks: { keys: [{ kty: "OKP", crv: "Ed25519", x: "AAAA", kid: "k" }] } }],
+    ["a jwksUri", { jwksUri: "https://as.example/jwks" }],
+  ])("the resource is the audience with %s", (_n, source) => {
+    const { auth } = parse({ ...source, resource: RESOURCE });
+    expect(effectiveAudience(auth)).toBe(RESOURCE);
+    expect(jwksWithoutAudience(auth)).toBe(false);
   });
 
-  it("the verifier binds no audience from it", () => {
-    const { auth } = parse({
-      jwksUri: "https://as.example/jwks",
-      resource: "https://r.example/mcp",
+  it("a token minted for another audience is refused", async () => {
+    const { jwks, mint } = await keyed();
+    await expect(
+      verifier({ jwks, resource: RESOURCE }).verify(await mint("https://other.example")),
+    ).rejects.toMatchObject({ reason: "audience_mismatch" });
+  });
+
+  it("a token with no audience is refused", async () => {
+    const { jwks, mint } = await keyed();
+    await expect(verifier({ jwks, resource: RESOURCE }).verify(await mint())).rejects.toThrow();
+  });
+
+  it("a token minted for the resource is accepted", async () => {
+    const { jwks, mint } = await keyed();
+    await expect(
+      verifier({ jwks, resource: RESOURCE }).verify(await mint(RESOURCE)),
+    ).resolves.toMatchObject({ caller: "a" });
+  });
+
+  it("an explicit auth.audience still wins over the resource", async () => {
+    const { jwks, mint } = await keyed();
+    const v = verifier({ jwks, resource: RESOURCE, audience: "api://vault" });
+    await expect(v.verify(await mint("api://vault"))).resolves.toMatchObject({ caller: "a" });
+    await expect(v.verify(await mint(RESOURCE))).rejects.toMatchObject({
+      reason: "audience_mismatch",
     });
+  });
+
+  it("allowMissingAudience keeps the old behaviour: nothing is bound", async () => {
+    const { jwks, mint } = await keyed();
+    const a = { jwks, resource: RESOURCE, allowMissingAudience: true };
+    expect(effectiveAudience(parse(a).auth)).toBeUndefined();
+    await expect(verifier(a).verify(await mint("https://other.example"))).resolves.toMatchObject({
+      caller: "a",
+    });
+  });
+});
+
+describe("a shared-secret server is not affected", () => {
+  it("binds no audience from the resource alone", () => {
+    const { auth } = parse({ jwtSecret: "x".repeat(40), resource: RESOURCE });
     expect(effectiveAudience(auth)).toBeUndefined();
-    expect(jwksWithoutAudience(auth)).toBe(true);
   });
 
-  it("a token minted for ANOTHER audience is accepted", async () => {
-    const { publicKey, privateKey } = await generateKeyPair("EdDSA", { crv: "Ed25519" });
-    const jwks = { keys: [{ ...(await exportJWK(publicKey)), kid: "k1", alg: "EdDSA" }] };
-    const v = buildJwtVerifier(parse({ jwks, resource: "https://r.example/mcp" }).auth);
-    const tok = await new SignJWT({ sub: "a" })
-      .setProtectedHeader({ alg: "EdDSA", kid: "k1" })
-      .setAudience("https://some-other-service.example")
-      .setExpirationTime("5m")
-      .sign(privateKey);
-    await expect((v as NonNullable<typeof v>).verify(tok)).resolves.toMatchObject({ caller: "a" });
-  });
-
-  it("with authorizationServers too, the resource IS the audience (the aligned shape)", () => {
+  it("with authorizationServers too, the resource is the audience as before", () => {
     const { auth } = parse({
-      jwksUri: "https://as.example/jwks",
-      resource: "https://r.example/mcp",
+      jwtSecret: "x".repeat(40),
+      resource: RESOURCE,
       authorizationServers: ["https://as.example"],
     });
-    expect(effectiveAudience(auth)).toBe("https://r.example/mcp");
-    expect(jwksWithoutAudience(auth)).toBe(false);
+    expect(effectiveAudience(auth)).toBe(RESOURCE);
   });
 });
