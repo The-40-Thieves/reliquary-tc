@@ -17,7 +17,7 @@ How was this verified?
 
 ## AI disclosure
 
-Which parts had substantial LLM contribution? Call out anything you did not write and do not fully understand. Write "None" if not applicable. See [CONTRIBUTING](../CONTRIBUTING.md#pull-requests).
+Which parts had substantial LLM contribution? Call out anything you did not write or do not fully understand. Write "None" if not applicable. See [CONTRIBUTING](../CONTRIBUTING.md#pull-requests).
 
 ## Checklist
 
