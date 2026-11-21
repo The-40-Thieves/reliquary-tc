@@ -315,6 +315,7 @@ export function createAppendNoteTool(deps: M1Deps): ToolDefinition {
             ...(scan.redactions > 0 ? { redactions: scan.redactions } : {}),
           },
           mayRead,
+          true,
         ),
         resolveResponseFormat(input, deps.responseFormat),
       );
