@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ReadRefusals } from "../src/tools/read-refusals";
 import { FolderPins, withFolderPins } from "../src/vault/folder-links";
-import { readNote } from "../src/vault/notes-io";
+import { moveNoReplace, readNote, writeFileAtomic } from "../src/vault/notes-io";
 import { makeTempDir, rmTemp } from "./tmp";
 
 const cleanups: Array<() => void> = [];
@@ -50,6 +50,30 @@ describe("ReadRefusals", () => {
       expect((error as Error).message).toContain("notes/gone.md");
       expect((error as Error).message).not.toContain(root);
     }
+  });
+
+  it.each([
+    ["a read under a missing folder", (root: string) => readNote(join(root, "nodir", "gone.md"))],
+    [
+      "a write under a missing folder",
+      (root: string) => writeFileAtomic(join(root, "nodir", "new.md"), Buffer.from("x"), false),
+    ],
+    [
+      "a move of a missing note",
+      (root: string) => moveNoReplace(join(root, "notes", "gone.md"), join(root, "notes", "b.md")),
+    ],
+  ])("%s reports ENOENT without the host path", (_name, run) => {
+    const root = makeTempDir("obtc-enoent-relative-");
+    cleanups.push(() => rmTemp(root));
+    mkdirSync(join(root, "notes"));
+    let caught: unknown;
+    try {
+      withFolderPins(new FolderPins([{ root }]), () => run(root));
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as NodeJS.ErrnoException | undefined)?.code).toBe("ENOENT");
+    expect((caught as Error).message).not.toContain(root);
   });
 
   it("readBounded returns null for a note over the cap without counting it", () => {

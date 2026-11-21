@@ -100,12 +100,15 @@ const readWalkOptions = (abs: string) => ({
   },
 });
 
-function missingReadPath(abs: string): never {
-  const enoent = new Error(
-    `ENOENT: no such file, open '${vaultDetailPath(abs)}'`,
-  ) as NodeJS.ErrnoException;
+/** An ENOENT that names the path relative to the vault: Node's own message carries the host path. */
+function enoentAt(detail: string, abs: string): NodeJS.ErrnoException {
+  const enoent = new Error(`ENOENT: ${detail} '${vaultDetailPath(abs)}'`) as NodeJS.ErrnoException;
   enoent.code = "ENOENT";
-  throw enoent;
+  return enoent;
+}
+
+function missingReadPath(abs: string): never {
+  throw enoentAt("no such file, open", abs);
 }
 
 /** Classify a native refusal without following any component while deciding ENOENT vs refusal. */
@@ -139,11 +142,13 @@ function mapNativeReadError(e: unknown, abs: string): never {
 function fallbackOpen(abs: string): number {
   const path = normalize(abs);
   refuseJsThroughPin(path);
-  const ancestors = walkDirectoriesNoFollow(dirname(path), readWalkOptions(path));
+  let ancestors: ReturnType<typeof walkDirectoriesNoFollow>;
   let leaf: BigIntStats;
   try {
+    ancestors = walkDirectoriesNoFollow(dirname(path), readWalkOptions(path));
     leaf = lstatSync(path, { bigint: true });
   } catch (error) {
+    if (error instanceof ReliquaryTcError) throw error;
     if ((error as NodeJS.ErrnoException).code === "ENOENT") missingReadPath(path);
     throw error;
   }
@@ -162,6 +167,7 @@ function fallbackOpen(abs: string): number {
     if ((e as NodeJS.ErrnoException).code === "ELOOP") {
       throw fallbackReadRefused("refusing symlinked or missing file", path);
     }
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") missingReadPath(path);
     throw e;
   }
   try {
@@ -405,19 +411,21 @@ export function writeFileAtomic(
       // A safe-write rejection (a symlinked path component, or the target itself a symlink) is
       // acl_denied. An unpinned path with a missing parent (createDirs=false) keeps ENOENT semantics,
       // matching the JS temp-open below. A pinned refusal is never remapped, as hardDelete does.
-      if (pinned === undefined && !existsSync(dirname(path))) {
-        const enoent = new Error(
-          `ENOENT: no such file or directory, open '${vaultDetailPath(abs)}'`,
-        ) as NodeJS.ErrnoException;
-        enoent.code = "ENOENT";
-        throw enoent;
-      }
+      if (pinned === undefined && !existsSync(dirname(path)))
+        throw enoentAt("no such file or directory, open", abs);
       throw err.aclDenied(`safe write refused the path: ${(e as Error).message}`, {
         path: vaultDetailPath(abs),
       });
     }
   }
-  const tmp = writeTempFile(abs, data, false);
+  let tmp: string;
+  try {
+    tmp = writeTempFile(abs, data, false);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT")
+      throw enoentAt("no such file or directory, open", abs);
+    throw e;
+  }
   try {
     if (opts.exclusive) commitNoReplace(tmp, abs);
     else renameSync(tmp, abs);
@@ -487,13 +495,7 @@ export function moveNoReplace(fromAbs: string, toAbs: string): void {
       return;
     } catch (e) {
       if (isNativeExists(e)) throw noteExistsConcurrently();
-      if (!existsSync(fromAbs)) {
-        const enoent = new Error(
-          `ENOENT: no such file or directory, rename '${vaultDetailPath(fromAbs)}'`,
-        ) as NodeJS.ErrnoException;
-        enoent.code = "ENOENT";
-        throw enoent;
-      }
+      if (!existsSync(fromAbs)) throw enoentAt("no such file or directory, rename", fromAbs);
       throw err.aclDenied(`safe rename refused the path: ${(e as Error).message}`, {
         path: vaultDetailPath(toAbs),
       });
@@ -508,6 +510,8 @@ export function moveNoReplace(fromAbs: string, toAbs: string): void {
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === "EEXIST") throw noteExistsConcurrently();
+    if (code === "ENOENT")
+      throw enoentAt("no such file or directory, rename", existsSync(fromAbs) ? toAbs : fromAbs);
     // No hard links here (FAT/exFAT, some network mounts). A rename would REPLACE a destination
     // created after any check, so copy the bytes with an exclusive create instead, then drop the
     // source: still no-replace, never check-then-rename.
