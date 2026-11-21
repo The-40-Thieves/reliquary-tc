@@ -139,32 +139,16 @@ describe("bookmarks and workspaces: a non-reader gets the fixed refusal and no a
     expect(r.ok).toBe(true);
   });
 
-  it.each([
-    ["an existing name", "secret-ws"],
-    ["a missing name", "no-such-ws"],
-  ])("open_workspace on %s refuses identically, with no layout", async (_label, name) => {
+  it("open_workspace gives one refusal for an existing and a missing name, and writes nothing", async () => {
     m3 = makeM3Vault({ files, acl: WRITE_ONLY_ACL });
-    const r = await m3.call("open_workspace", { vault: "test", name }, WRITER);
-    expect(errOf(r)?.message).toBe(FIXED_REFUSAL);
-    expect(JSON.stringify(r)).not.toMatch(/4821|layout|active|content_hash|not found/);
-  });
-
-  it("open_workspace refusals for an existing and a missing name are byte-identical", async () => {
-    m3 = makeM3Vault({ files, acl: WRITE_ONLY_ACL });
-    const hit = await m3.call("open_workspace", { vault: "test", name: "secret-ws" }, WRITER);
-    const miss = await m3.call("open_workspace", { vault: "test", name: "no-such-ws" }, WRITER);
-    expect(hit.ok).toBe(false);
-    expect(JSON.stringify(hit.ok ? null : hit.error)).toBe(
-      JSON.stringify(miss.ok ? null : miss.error),
-    );
-  });
-
-  it("a refused open_workspace leaves the active workspace unchanged", async () => {
-    const two = JSON.stringify({ active: "a", workspaces: { a: {}, b: {} } });
-    m3 = makeM3Vault({ files: { ".obsidian/workspaces.json": two }, acl: WRITE_ONLY_ACL });
-    const r = await m3.call("open_workspace", { vault: "test", name: "b" }, WRITER);
-    expect(errOf(r)?.message).toBe(FIXED_REFUSAL);
-    expect(m3.read(".obsidian/workspaces.json")).toBe(two);
+    const open = (name: string) => m3?.call("open_workspace", { vault: "test", name }, WRITER);
+    const [hit, miss] = [await open("secret-ws"), await open("no-such-ws")];
+    const whole = [hit, miss].map((r) => JSON.stringify(r?.ok ? r : r?.error));
+    expect(errOf(hit as ToolResult)?.message).toBe(FIXED_REFUSAL);
+    // The whole error, code and details included, is the same for both names.
+    expect(whole[0]).toBe(whole[1]);
+    expect(whole[0]).not.toMatch(/4821|layout|active|content_hash|not found/);
+    expect(m3.read(".obsidian/workspaces.json")).toBe(WORKSPACES);
   });
 
   it("a reader still opens a workspace and gets its layout", async () => {
