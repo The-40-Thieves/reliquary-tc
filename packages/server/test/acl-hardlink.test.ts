@@ -70,8 +70,8 @@ describe("C-1b hard-link folder-ACL bypass", () => {
     }
   });
 
-  // The guard used to run only when an ACL object was passed. Delete and move do not read through
-  // the fd readers, so without it nothing refused an alias of a file in a default-denied folder.
+  // The guard used to run only when an ACL object was passed. A delete does not read through the
+  // fd readers, so without it nothing refused a second name for another inode.
   it.each(["read", "write", "delete"] as const)(
     "rejects a hard link on %s when no ACL is configured",
     (op) => {
@@ -81,7 +81,7 @@ describe("C-1b hard-link folder-ACL bypass", () => {
         writeFileSync(join(root, ".obsidian", "app.json"), "{}");
         linkSync(join(root, ".obsidian", "app.json"), join(root, "public", "alias.md"));
         expect(() => enforcePathAcl(undefined, op, "public/alias.md", root, [])).toThrow(
-          /hard-link|inode/i,
+          "refusing a hard-linked file (inode aliasing)",
         );
       } finally {
         rmTemp(root);
@@ -93,7 +93,9 @@ describe("C-1b hard-link folder-ACL bypass", () => {
     const root = tempVault();
     try {
       writeFileSync(join(root, "public", "ok.md"), "hello\n");
-      expect(() => enforcePathAcl(undefined, "delete", "public/ok.md", root, [])).not.toThrow();
+      // An existing single-link file for every op, and a write target that does not exist yet.
+      for (const op of ["read", "write", "delete"] as const)
+        expect(() => enforcePathAcl(undefined, op, "public/ok.md", root, [])).not.toThrow();
       expect(() => enforcePathAcl(undefined, "write", "public/new.md", root, [])).not.toThrow();
     } finally {
       rmTemp(root);

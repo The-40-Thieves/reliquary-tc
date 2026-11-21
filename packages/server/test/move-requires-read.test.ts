@@ -201,7 +201,7 @@ describe("bulk_move_notes needs read on every source", () => {
       { vault: "test", moves, dry_run: false },
       noAcl,
     );
-    expect(real.ok).toBe(false);
+    expect(real.ok ? null : real.error.code, JSON.stringify(real)).toBe("acl_denied");
     expect(b.exists("a/c.md")).toBe(true);
     expect(b.exists("b/c.md")).toBe(false);
   });

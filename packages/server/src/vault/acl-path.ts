@@ -237,9 +237,9 @@ export function enforcePathAcl(
   // THE-414 / #280: this path passed its folder-ACL check; record it for the (default-off) ACL
   // audit so a handler that later resolves an UNdeclared path for an fs op is caught in dev/test.
   recordAclCheck(path);
-  // Inode-aliasing guard (C-1b): reject a hard-linked regular file, with or without an ACL (the
-  // default-denied roots apply either way). realpath cannot dereference a hard link, so an aliased
-  // target outside the allowed set would otherwise pass the glob check.
+  // Inode-aliasing guard (C-1b): reject a hard-linked regular file, with or without an ACL.
+  // realpath cannot dereference a hard link, so an aliased target outside the allowed set (or,
+  // with no ACL, outside the vault) would otherwise pass as the name it was given.
   // The fd-based readers (notes-io) reject nlink>1 on read; this additionally covers delete/move,
   // which do not read through readNote. Fail closed; a not-yet-created write path has no stat.
   if (isHardLinkedFile(resolved.abs))
