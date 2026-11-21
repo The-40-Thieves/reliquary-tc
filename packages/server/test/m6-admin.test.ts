@@ -215,28 +215,19 @@ describe("inspect_acl", () => {
     v = makeM6Vault({ register });
     const vault = v;
     expect(() => enforcePathAcl(vault.acl, "write", "bad:name.md", vault.root, ["*"])).toThrow();
-    const out = data<{ allowed: boolean }>(
-      await v.call("inspect_acl", {
-        vault: "test",
-        path: "bad:name.md",
-        op: "write",
-        scopes: ["*"],
-      }),
-    );
-    expect(out).toMatchObject({ allowed: false, denied_by: "invalid_write_path" });
-  });
-
-  it("reports the kill switch, not the name, for an invalid write name on a read-only vault", async () => {
+    const badName = { vault: "test", path: "bad:name.md", op: "write", scopes: ["*"] };
+    expect(data(await v.call("inspect_acl", badName))).toMatchObject({
+      allowed: false,
+      denied_by: "invalid_write_path",
+    });
+    // A read-only vault refuses the write before its name is looked at: the kill switch wins.
+    v.cleanup();
     v = makeM6Vault({ acl: { readOnly: true }, register });
-    const out = data<{ allowed: boolean; denied_by: string; kill_switch: boolean }>(
-      await v.call("inspect_acl", {
-        vault: "test",
-        path: "bad:name.md",
-        op: "write",
-        scopes: ["*"],
-      }),
-    );
-    expect(out).toMatchObject({ allowed: false, denied_by: "read_only", kill_switch: true });
+    expect(data(await v.call("inspect_acl", badName))).toMatchObject({
+      allowed: false,
+      denied_by: "read_only",
+      kill_switch: true,
+    });
   });
 
   it("allows a write when path + scope permit", async () => {
