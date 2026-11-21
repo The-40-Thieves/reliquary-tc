@@ -227,6 +227,8 @@ Open PRs against `main`. Use the PR template. For merge:
 
 PRs that miss required items will be flagged but not auto-closed. Maintainers help bring them across the line.
 
+**AI policy: disclosure.** AI-assisted contributions are welcome, and much of this repository is agent-authored. When you open a PR, say which parts had substantial LLM contribution, and call out anything you did not write yourself and do not fully understand. The PR template has a section for it.
+
 ### Generated files and merge conflicts
 
 Two PRs that both touch a generated file conflict on it by construction, so this repo avoids
