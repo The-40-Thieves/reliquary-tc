@@ -381,8 +381,8 @@ describe("against the real producer (extractPreferences)", () => {
 
   it("a row written for alice steers alice and nobody else", async () => {
     const edb = edbWith();
-    episode(edb, "e1", "alice");
-    for (let i = 0; i < 5; i++) await extractPreferences(edb, "main", { nowMs: NOW + i });
+    for (let i = 0; i < 5; i++) episode(edb, `e${i}`, "alice");
+    await extractPreferences(edb, "main", { nowMs: NOW });
     const ask = (caller: string | null) =>
       resolveSearchVaultMode({
         explicit: undefined,
@@ -396,17 +396,45 @@ describe("against the real producer (extractPreferences)", () => {
     expect(ask(null)).toBe("default");
   });
 
-  it("KNOWN LIMIT: extraction re-counts unchanged evidence, so weight counts runs, not windows", async () => {
-    // One judged window, re-extracted five times, reaches the threshold. This is why extraction is
-    // not scheduled behind the flag, and why the threshold is a floor, not a confidence. If
-    // extraction becomes idempotent this test must flip, and the docs/config text with it.
+  it("counts each evidence window only once", async () => {
     const edb = edbWith();
     episode(edb, "e1", "alice");
-    await extractPreferences(edb, "main", { nowMs: NOW });
-    const weight = () =>
-      (edb.prepare("SELECT weight FROM preference_profile").get() as { weight: number }).weight;
-    expect(weight()).toBe(1);
-    for (let i = 1; i < 5; i++) await extractPreferences(edb, "main", { nowMs: NOW + i });
-    expect(weight()).toBeGreaterThanOrEqual(SEARCH_MODE_MIN_WEIGHT);
+    for (let i = 0; i < 5; i++) await extractPreferences(edb, "main", { nowMs: NOW + i });
+    const profile = () => edb.prepare("SELECT weight, version FROM preference_profile").get();
+    const count = () =>
+      (edb.prepare("SELECT COUNT(*) AS n FROM preference_deltas").get() as { n: number }).n;
+    expect(profile()).toEqual({ weight: 1, version: 1 });
+    expect(count()).toBe(1);
+    episode(edb, "e2", "alice");
+    for (let i = 0; i < 2; i++) await extractPreferences(edb, "main", { nowMs: NOW + 10 + i });
+    expect(profile()).toEqual({ weight: 1.5, version: 2 });
+    expect(count()).toBe(2);
+  });
+
+  it("rolls back the whole batch when a later delta fails", () => {
+    const edb = edbWith();
+    edb.exec(`CREATE TRIGGER fail_second BEFORE INSERT ON preference_deltas
+      WHEN NEW.value = 'search_regex' BEGIN SELECT RAISE(ABORT, 'injected failure'); END`);
+    expect(() =>
+      applyPreferenceDeltas(
+        edb,
+        "main",
+        [
+          { key: KEY, op: "add", value: "search_text", scopeCaller: "alice" },
+          { key: KEY, op: "add", value: "search_regex", scopeCaller: "alice" },
+        ],
+        NOW,
+      ),
+    ).toThrow("injected failure");
+    expect(edb.prepare("SELECT * FROM preference_deltas").all()).toEqual([]);
+    expect(edb.prepare("SELECT * FROM preference_profile").all()).toEqual([]);
+    expect(
+      applyPreferenceDeltas(
+        edb,
+        "main",
+        [{ key: KEY, op: "add", value: "search_text", scopeCaller: "alice" }],
+        NOW,
+      ).version,
+    ).toBe(1);
   });
 });

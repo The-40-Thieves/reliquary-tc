@@ -208,6 +208,9 @@ export type WriteTxnLabel =
   | "memory_delete"
   // The periodic memory-orphan sweep: one bounded delete batch per transaction.
   | "memory_orphan_sweep"
+  // One preference-extraction batch: the profile rows and their delta log move together, and the
+  // already-recorded check runs inside it, so two extractors cannot both apply one window.
+  | "preference_deltas"
   // THE-726: the task-verdict projection. One label for the stamp AND the -1 demotion, because
   // they are one transaction by requirement: a crash between them would leave a session's episodes
   // condemned but still promoted, which is exactly the hold-rule bypass the demotion exists to
