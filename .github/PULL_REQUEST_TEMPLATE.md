@@ -15,6 +15,10 @@ How was this verified?
 - [ ] Manual testing
 - [ ] Not applicable
 
+## AI disclosure
+
+Which parts had substantial LLM contribution? Call out anything you did not write or do not fully understand. Write "None" if not applicable. See [CONTRIBUTING](../CONTRIBUTING.md#pull-requests).
+
 ## Checklist
 
 - [ ] Tests added or updated

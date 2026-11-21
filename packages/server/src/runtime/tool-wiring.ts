@@ -132,12 +132,8 @@ export function wireHealthTools(deps: HealthToolsDeps): void {
     reconcileView({
       isFollower: deps.getLeaderRole?.() === "follower",
       db: deps.db,
-      self: {
-        reconcile: deps.indexHealth.reconcile,
-        reconcileAt: deps.indexHealth.reconcileAt,
-        reconcileErrors: deps.indexHealth.reconcileErrors,
-        notesReady: deps.indexHealth.notesReady,
-      },
+      vaults: deps.vaults,
+      self: deps.indexHealth,
     });
   // Read ONCE per call: the index block and the authenticated detail must come from the same
   // persisted row, not from two reads that a leader write can land between (GH #995 review).
@@ -394,6 +390,7 @@ export interface M1WiringDeps {
   configPath: string | undefined;
   vaultRegistry: VaultRegistry;
   db: Database;
+  metadataReady?: () => boolean;
   embeddingProvider: EmbeddingProvider;
   /** THE-683: the boot-built representation identity, passed to indexVault rather than re-derived. */
   representation: RepresentationManifest;
@@ -440,7 +437,9 @@ export function wireM1Tools(deps: M1WiringDeps): void {
     // THE-603: legibility signal when the above no-ops for a destructive write.
     onSnapshotSkipped: deps.onSnapshotSkipped,
     // THE-291 (3B): metadata tools read the notes table once the boot notes pass commits.
-    metadataIndex: deps.fts.metadataIndex(() => deps.indexHealth.notesReady),
+    metadataIndex: deps.fts.metadataIndex(
+      deps.metadataReady ?? (() => deps.indexHealth.notesReady),
+    ),
     requireCas: config.writes.requireCas,
     // GH #1027: tools.defaults.responseFormat, for every M1 tool that supports response_format.
     responseFormat: config.tools?.defaults?.responseFormat,
@@ -496,6 +495,7 @@ export function wireM1Tools(deps: M1WiringDeps): void {
 }
 
 export interface DomainToolsDeps {
+  metadataReady?: () => boolean;
   registry: ToolRegistry;
   config: ServerConfig;
   vaultRegistry: VaultRegistry;
@@ -595,7 +595,9 @@ export function wireDomainTools(deps: DomainToolsDeps): void {
       : {}),
     autoRoute: config.retrieval.searchAutoRoute,
     // THE-291 (3B): FTS-accelerated search_text once the boot reconcile's notes pass commits.
-    metadataIndex: deps.fts.metadataIndex(() => deps.indexHealth.notesReady),
+    metadataIndex: deps.fts.metadataIndex(
+      deps.metadataReady ?? (() => deps.indexHealth.notesReady),
+    ),
     // THE-491: get_index_status reports chunks_upserted from the last index_vault call.
     onIndexVaultComplete: (vaultId, stats) => {
       deps.indexHealth.lastChunksUpserted = stats.chunks_upserted;

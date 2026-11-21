@@ -118,7 +118,7 @@ export function casConflict(
 
 /** A write ack's prev_hash and quality_warning describe the file's prior bytes: a caller that may not
  *  read the file gets neither key (not a null that would pass for "no prior state"). */
-export function readGatedAck<T extends object>(ack: T, mayRead: boolean): T {
+export function readGatedAck<T extends object>(ack: T, mayRead: boolean, omitBytes = false): T {
   if (mayRead) return ack;
   const {
     prev_hash: _prev,
@@ -128,5 +128,7 @@ export function readGatedAck<T extends object>(ack: T, mayRead: boolean): T {
     prev_hash?: unknown;
     quality_warning?: unknown;
   };
-  return rest as T;
+  if (!omitBytes) return rest as T;
+  const { bytes_written: _bytes, ...safe } = rest as typeof rest & { bytes_written?: unknown };
+  return safe as T;
 }
