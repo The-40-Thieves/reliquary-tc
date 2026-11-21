@@ -54,6 +54,13 @@ test("every published package ships the root LICENSE and NOTICE byte for byte", 
   }
 });
 
+test("the Docker runtime stage copies the root LICENSE and NOTICE", () => {
+  const stages = read("Dockerfile").split(/^(?=FROM )/m);
+  const runtime = stages.find((stage) => /^FROM \S+ AS runtime$/m.test(stage));
+  assert.ok(runtime, "Docker runtime stage not found");
+  assert.match(runtime, /^COPY --from=build .*\/app\/LICENSE \/app\/NOTICE \/app\/$/m);
+});
+
 test("the crate, bundle and plugin manifests declare Apache-2.0", () => {
   assert.match(read("packages/native/Cargo.toml"), /^license = "Apache-2\.0"$/m);
   assert.equal(readJson("mcpb/manifest.json").license, SPDX);

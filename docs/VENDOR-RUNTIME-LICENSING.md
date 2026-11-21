@@ -64,11 +64,9 @@ only in design or candidate lists.
 
 Facts only. Each gap names its evidence path. None of these is fixed in this change.
 
-- **G1. No NOTICE or THIRD_PARTY file.** `fd -i "notice|third.party" -E node_modules` finds only source files
-  with "notice" in the name (boot notices, a legacy notice module). There is no root NOTICE,
-  THIRD_PARTY or ATTRIBUTION file. The only third-party licence text in a package is
-  `packages/embedder-local/licenses/onnxruntime-LICENSE`. The corpus notices in
-  `packages/server/eval/corpora/ATTRIBUTION.md` cover eval data that is not shipped.
+- **G1. Third-party licence coverage remains incomplete.** The root NOTICE exists and
+  `scripts/license-consistency.test.mjs` gates its presence and copies in published packages.
+  Remaining third-party licence gaps are listed below.
 - **G2. ORT and WASM licence text may not travel with the MCPB bundle or binaries.** The bundling
   scripts ship the ORT native libraries and WASM (`scripts/lib/embedder-bundle.mjs`,
   `ORT_PLATFORMS`, `ortWasmFiles`). A grep of `scripts/bundle-mcpb.ts`,
