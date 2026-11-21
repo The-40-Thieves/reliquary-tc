@@ -69,4 +69,34 @@ describe("C-1b hard-link folder-ACL bypass", () => {
       rmTemp(root);
     }
   });
+
+  // The guard used to run only when an ACL object was passed. Delete and move do not read through
+  // the fd readers, so without it nothing refused an alias of a file in a default-denied folder.
+  it.each(["read", "write", "delete"] as const)(
+    "rejects a hard link on %s when no ACL is configured",
+    (op) => {
+      const root = tempVault();
+      try {
+        mkdirSync(join(root, ".obsidian"), { recursive: true });
+        writeFileSync(join(root, ".obsidian", "app.json"), "{}");
+        linkSync(join(root, ".obsidian", "app.json"), join(root, "public", "alias.md"));
+        expect(() => enforcePathAcl(undefined, op, "public/alias.md", root, [])).toThrow(
+          /hard-link|inode/i,
+        );
+      } finally {
+        rmTemp(root);
+      }
+    },
+  );
+
+  it("still allows a single-link note when no ACL is configured", () => {
+    const root = tempVault();
+    try {
+      writeFileSync(join(root, "public", "ok.md"), "hello\n");
+      expect(() => enforcePathAcl(undefined, "delete", "public/ok.md", root, [])).not.toThrow();
+      expect(() => enforcePathAcl(undefined, "write", "public/new.md", root, [])).not.toThrow();
+    } finally {
+      rmTemp(root);
+    }
+  });
 });
