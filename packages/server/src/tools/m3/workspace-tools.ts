@@ -109,6 +109,8 @@ export function buildWorkspaceTools(deps: M3Deps): ToolDefinition[] {
       handler: (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
         enforcePathAcl(ctx.acl, "write", WORKSPACES_PATH, v.root, ctx.grantedScopes);
+        // The stored layout and whether the name exists are read from the file: gate first.
+        requireContentRead(ctx, v.root, WORKSPACES_PATH, "read:workspaces");
         const abs = resolveVaultPath(v.root, WORKSPACES_PATH);
         const file = readJsonFile<WorkspacesDoc>(abs, { workspaces: {} });
         checkCas({
