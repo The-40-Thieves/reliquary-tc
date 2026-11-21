@@ -41,7 +41,7 @@ assumptions:
   combines byte-level traversal rejection (absolute paths and `..` segments) with a real-path
   check that canonicalizes the vault root and the deepest existing target segment through
   symlinks — so an in-vault symlink (or a symlinked ancestor) pointing outside the vault root is
-  rejected, not just lexical `..`. Under a folder ACL, reads and writes also reject a **hard-linked**
+  rejected, not just lexical `..`. Reads, writes, deletes and moves also reject a **hard-linked**
   regular file (`st_nlink > 1`): a hard link aliases an inode that realpath cannot dereference, so it
   could otherwise serve a file outside the allowed folder. Reads run on the opened fd (fstat and read
   on the same object), and the atomic write opens its temp file `O_EXCL | O_NOFOLLOW` on a random
@@ -1009,9 +1009,8 @@ so operators can reason about them rather than discover them.
   batch is abandoned, the plan is rebuilt and re-proved ONCE, and a second change refuses with
   `concurrent_modification` and nothing moved. A new unrepresentable backlink fails the re-proof the
   same way an old one does. In `bulk_move_notes` a real run refuses the whole batch when any source cannot
-  be read (a hard-linked source included), before anything moves; a dry run whose source fails the read ACL is refused as a whole call (`acl_denied`), as a real run is;
-  only a source that is unreadable with no folder ACL in play (a hard-linked file) is reported on its own
-  row by a dry run. A row refused by a `block`-mode scan, whose destination cannot be moved aside, or whose destination
+  be read (a hard-linked source included), before anything moves; a dry run whose source fails the read ACL is refused as a whole call (`acl_denied`), as a real run is,
+  with or without a folder ACL. A row refused by a `block`-mode scan, whose destination cannot be moved aside, or whose destination
   appeared after validation fails alone and the rest are planned again without it. Snapshots are dropped after a clean rollback and kept when the rollback was
   incomplete (`rollback_incomplete`: restore those notes with `restore_note`).
   A source edited after the final recheck is therefore kept and the batch rolled back (the move is

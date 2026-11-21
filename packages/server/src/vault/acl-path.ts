@@ -237,12 +237,12 @@ export function enforcePathAcl(
   // THE-414 / #280: this path passed its folder-ACL check; record it for the (default-off) ACL
   // audit so a handler that later resolves an UNdeclared path for an fs op is caught in dev/test.
   recordAclCheck(path);
-  // Inode-aliasing guard (C-1b): when an ACL is present (so .obsidian/.git/.trash and any path
-  // whitelist are enforced), reject a hard-linked regular file. realpath cannot dereference a
-  // hard link, so an aliased target outside the allowed set would otherwise pass the glob check.
+  // Inode-aliasing guard (C-1b): reject a hard-linked regular file, with or without an ACL.
+  // realpath cannot dereference a hard link, so an aliased target outside the allowed set (or,
+  // with no ACL, outside the vault) would otherwise pass as the name it was given.
   // The fd-based readers (notes-io) reject nlink>1 on read; this additionally covers delete/move,
   // which do not read through readNote. Fail closed; a not-yet-created write path has no stat.
-  if (acl && isHardLinkedFile(resolved.abs))
+  if (isHardLinkedFile(resolved.abs))
     throw err.aclDenied("refusing a hard-linked file (inode aliasing)", {
       path: redactedPath,
       op,
@@ -259,9 +259,6 @@ export function enforcePathAcl(
  * deepest existing ancestor, as it does for a write target. Anything that cannot be resolved FAILS
  * CLOSED. There is deliberately no "unrestricted caller" shortcut: only the readPaths glob is
  * cheap to skip, and enforcePathAcl already skips it when there is none.
- *
- * With no ACL at all enforcePathAcl does not stat for a hard link (the fd readers refuse it at
- * read time), so that one refusal is repeated here: read_note would refuse the file either way.
  */
 export function callerCanReadVaultPath(
   acl: FolderAcl | undefined,
@@ -271,10 +268,6 @@ export function callerCanReadVaultPath(
 ): boolean {
   try {
     enforcePathAcl(acl, "read", rel, root, grantedScopes);
-    if (!acl) {
-      const st = statSync(resolveVaultPathChecked(root, rel).abs, { throwIfNoEntry: false });
-      if (st?.isFile() && st.nlink > 1) return false;
-    }
     return true;
   } catch {
     return false;

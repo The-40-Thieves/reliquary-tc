@@ -180,33 +180,28 @@ describe("bulk_move_notes needs read on every source", () => {
     expect(b.exists("Public/p.md")).toBe(false);
   });
 
-  it("dry_run: a hard-linked source (no ACL) is reported on its own row; a real run refuses the batch", async () => {
+  it("a hard-linked source with no ACL is refused as a whole call, dry run or real", async () => {
     b = bulkVault({ "a/p.md": SECRET, "a/c.md": "C" }, {});
     linkSync(join(b.root, "a/p.md"), join(b.root, "a/p-link.md"));
     const moves = [
       { from: "a/p.md", to: "b/p.md" },
       { from: "a/c.md", to: "b/c.md" },
     ];
-    // No folder ACL in play: the hard-link refusal is then left to the row pass (an ACL caller is
-    // refused by the central stage before that, as a whole call).
+    // No folder ACL in play: the central stage refuses the hard link all the same, before the row
+    // pass, exactly as it does for a caller with an ACL.
     const noAcl = { grantedScopes: BULK_SCOPES, acl: undefined };
     const dry = await b.callConfirmed(
       "bulk_move_notes",
       { vault: "test", moves, dry_run: true },
       noAcl,
     );
-    expect(dry.ok, JSON.stringify(dry)).toBe(true);
-    const rows = (dry.ok ? dry.data : {}) as {
-      results: Array<{ ok: boolean; error?: { code: string } }>;
-    };
-    expect(rows.results[0]?.error?.code).toBe("invalid_input");
-    expect(rows.results[1]?.ok).toBe(true);
+    expect(dry.ok ? null : dry.error.code, JSON.stringify(dry)).toBe("acl_denied");
     const real = await b.callConfirmed(
       "bulk_move_notes",
       { vault: "test", moves, dry_run: false },
       noAcl,
     );
-    expect(real.ok).toBe(false);
+    expect(real.ok ? null : real.error.code, JSON.stringify(real)).toBe("acl_denied");
     expect(b.exists("a/c.md")).toBe(true);
     expect(b.exists("b/c.md")).toBe(false);
   });
