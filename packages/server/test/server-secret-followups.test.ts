@@ -129,10 +129,10 @@ function racer(
   return { kill: () => p.kill("SIGKILL"), ready, done };
 }
 
-// Reads made while the mover holds the key aside: at least MIN, then more until MAX or the budget.
+// Reads made while the mover holds the key aside: at least MIN, then more until MAX or the cap.
 const GAP_READS_MIN = 500;
 const GAP_READS_MAX = 5_000;
-const GAP_READ_BUDGET_MS = 10_000;
+const GAP_READ_CAP_MS = 10_000; // stall-ok: caps this test's own work, waits on nothing
 
 describe("concurrent repair of a corrupt server secret", () => {
   it(
@@ -290,12 +290,12 @@ describe("concurrent repair of a corrupt server secret", () => {
         mover.stdout.once("data", () => resolve());
       });
       // A call that opens the path in the gap must wait for the lock holder and adopt the key it
-      // puts back: never throw ENOENT, never publish a different key. The loop stops on a time budget
+      // puts back: never throw ENOENT, never publish a different key. The loop stops on a time cap
       // once it has done its minimum: 5,000 reads take under 1s on Linux runners, 2-20s on macOS
       // ones and more than the test timeout on a stalled one.
-      const deadline = Date.now() + GAP_READ_BUDGET_MS;
+      const stopAt = Date.now() + GAP_READ_CAP_MS; // stall-ok: a cap on work, not a wait
       for (let reads = 0; reads < GAP_READS_MAX; reads++) {
-        if (reads >= GAP_READS_MIN && Date.now() > deadline) break;
+        if (reads >= GAP_READS_MIN && Date.now() > stopAt) break;
         expect(serverSecret(dir)).toBe(initial);
       }
       // The mover was running (the key was being moved aside) for the whole read loop.
