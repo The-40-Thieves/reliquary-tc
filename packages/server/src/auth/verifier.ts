@@ -198,15 +198,8 @@ export function createTokenVerifier(o: TokenVerifierOptions): TokenVerifier {
               { issuer: o.asIssuer, resource: o.resource, maxAgeSeconds: o.maxAgeSeconds },
               {
                 ...revocation,
-                isRevoked: (jti) => {
-                  try {
-                    return (
-                      Boolean(o.pendingRevocation?.(jti)) || Boolean(revocation.isRevoked?.(jti))
-                    );
-                  } catch {
-                    return true;
-                  }
-                },
+                isRevoked: (jti) =>
+                  Boolean(o.pendingRevocation?.(jti)) || Boolean(revocation.isRevoked?.(jti)),
               },
             );
           case "mint":

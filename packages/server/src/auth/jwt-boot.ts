@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { ServerConfig } from "@the-40-thieves/reliquary-tc-shared";
-import type { Database } from "../db/types";
+import { cachedPrepare, type Database } from "../db/types";
 import { enabledAs } from "./as-metadata";
 import {
   jwksWithoutAudience,
@@ -60,7 +60,8 @@ export function buildJwtVerifier(
     issuer: auth.issuer,
     registry,
     pendingRevocation: oauthDb
-      ? (jti) => Boolean(oauthDb.prepare("SELECT 1 FROM revocation_outbox WHERE jti = ?").get(jti))
+      ? (jti) =>
+          Boolean(cachedPrepare(oauthDb, "SELECT 1 FROM revocation_outbox WHERE jti = ?").get(jti))
       : undefined,
     requireJti: auth.requireJti,
     // A token signed by an `as`-purpose registry key is verified only when the bundled authorization

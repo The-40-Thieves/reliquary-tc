@@ -34,6 +34,7 @@ it("accepts an unrevoked token", async () => {
 it("refuses a token when the outbox lookup fails", async () => {
   const flow = await makeFlow();
   const token = await issue(flow);
+  expect(await mcpPing(flow, token.access)).toBe(200);
   flow.db.exec("DROP TABLE revocation_outbox");
   expect(await mcpPing(flow, token.access)).toBe(401);
 });
