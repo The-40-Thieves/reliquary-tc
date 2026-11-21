@@ -932,3 +932,24 @@ test("SECURITY.md accepts both release identities and nothing else", () => {
     "owner and repo are matched in their real case",
   );
 });
+
+// The platform packages are published by `napi pre-publish`, which runs `npm publish` itself, so
+// the `--provenance` flag the umbrella packages get never reaches them. Provenance is asked for
+// twice: in each generated package's publishConfig, and in the environment of the napi step.
+test("the napi-published platform packages are published with provenance", () => {
+  const publishNpm = jobBlock("publish-npm");
+  const patch = publishNpm.match(
+    /- name: make platform sub-packages public[\s\S]*?(?=\n {6}- name: |\n {6}# )/,
+  );
+  assert.ok(patch, "the step that patches the platform package.json files exists");
+  assert.match(patch[0], /access:"public",provenance:true/, "publishConfig.provenance is set");
+  const napi = publishNpm.match(
+    /- name: publish platform sub-packages \(napi\)[\s\S]*?napi pre-publish[^\n]*/,
+  );
+  assert.ok(napi, "the napi publish step exists");
+  assert.match(
+    napi[0],
+    /env:\n\s+NPM_CONFIG_PROVENANCE: "true"/,
+    "the napi step asks npm for provenance",
+  );
+});
