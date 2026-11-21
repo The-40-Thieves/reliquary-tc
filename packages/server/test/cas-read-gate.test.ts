@@ -157,6 +157,74 @@ describe("write-only caller: CAS detail is read-gated", () => {
     expect(deleted.prev_hash).toBeNull();
   });
 
+  it("append acknowledgements do not reveal hidden note size", async () => {
+    const results: Record<string, unknown>[] = [];
+    for (const length of [9, 90]) {
+      v = writeOnlyVault({ "Private/p.md": "x".repeat(length) });
+      results.push(
+        dataOf(
+          await v.call(
+            "append_note",
+            {
+              vault: "test",
+              path: "Private/p.md",
+              content: "tail",
+            },
+            SCOPES,
+          ),
+        ),
+      );
+      v.cleanup();
+      v = undefined;
+    }
+    expect(results[0]).toEqual(results[1]);
+  });
+
+  it.each(["redact", "block"] as const)(
+    "append ignores hidden secrets in %s mode",
+    async (mode) => {
+      const secret = ["AKIA", "Q7W8E9R0T1Y2U3I4"].join("");
+      const results: ToolResult[] = [];
+      for (const hidden of [secret, "x".repeat(secret.length)]) {
+        v = makeTestVault({
+          files: { "Private/p.md": hidden },
+          acl: WRITE_ONLY_ACL,
+          memoryDefense: { mode, pii: false },
+        });
+        results.push(
+          await v.call(
+            "append_note",
+            {
+              vault: "test",
+              path: "Private/p.md",
+              content: "tail",
+            },
+            SCOPES,
+          ),
+        );
+        v.cleanup();
+        v = undefined;
+      }
+      expect(dataOf(results[0] as ToolResult)).toEqual(dataOf(results[1] as ToolResult));
+    },
+  );
+
+  it("append retains the whole-note byte count for readers", async () => {
+    v = readerVault();
+    const result = dataOf(
+      await v.call(
+        "append_note",
+        {
+          vault: "test",
+          path: "Private/p.md",
+          content: "tail",
+        },
+        SCOPES,
+      ),
+    );
+    expect(result.bytes_written).toBe(Buffer.byteLength(`${SECRET}tail`));
+  });
+
   it("confirmation: overwriting an empty or a non-empty note gets the same elicit_required", async () => {
     v = writeOnlyVault({ "Private/full.md": SECRET, "Private/empty.md": "" });
     const full = await v.call(
