@@ -73,6 +73,7 @@ interface ResolvedSpec {
 // 10 minutes: well over a healthy ~23 MB fetch (+ retry); older almost certainly means crashed.
 const DEFAULT_LOCK_STALE_MS = 10 * 60 * 1000;
 const DEFAULT_LOCK_POLL_MS = 200;
+const LOCK_REFRESH_INTERVAL_MS = 30 * 1000;
 
 function resolveSpec(spec: ModelFetchSpec = {}): ResolvedSpec {
   return {
@@ -286,6 +287,17 @@ async function releaseLock(finalDir: string): Promise<void> {
   await rm(lockDirFor(finalDir), { recursive: true, force: true });
 }
 
+function startLockRefresh(finalDir: string): () => void {
+  const lockDir = lockDirFor(finalDir);
+  const timer = setInterval(() => {
+    writeLockOwnerAtomic(lockDir, { pid: process.pid, startedAt: Date.now() }).catch(
+      () => undefined,
+    );
+  }, LOCK_REFRESH_INTERVAL_MS);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 // A waiter gives up after this many multiples of `lockStaleMs` and throws rather than polling
 // forever — a backstop under the stale-takeover check for whatever `lockAgeMs` can't observe.
 const LOCK_WAIT_DEADLINE_MULTIPLIER = 3;
@@ -467,6 +479,7 @@ export async function fetchAndVerifyModel(
 
   const outcome = await acquireLockOrObserveVerified(finalDir, spec, resolved);
   if (outcome === "already-verified") return finalDir;
+  const stopLockRefresh = startLockRefresh(finalDir);
   try {
     // Double-checked: another process may have finished publishing in the narrow window between
     // the check above and actually acquiring the lock.
@@ -491,6 +504,7 @@ export async function fetchAndVerifyModel(
     }
     return finalDir;
   } finally {
+    stopLockRefresh();
     await releaseLock(finalDir);
   }
 }
