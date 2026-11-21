@@ -1009,7 +1009,7 @@ describe("preference profile (ACE typed deltas)", () => {
     };
     // The 2-vs-1 split stays auditable: sampled_calls is the window's true size, tool_calls the
     // winner's count — an auditor can see the window was won 2-to-1, not 2-to-0.
-    expect(ev.evidence).toBe("tool=search_text sampled_calls=3 tool_calls=2");
+    expect(ev.evidence).toBe('["episode","s1",100]\ntool=search_text sampled_calls=3 tool_calls=2');
   });
 
   it("extractPreferences: a mixed-verdict fixture — +1 strengthens, -1 weakens an existing key, 0 and NULL yield no delta", async () => {
@@ -1065,24 +1065,20 @@ describe("preference profile (ACE typed deltas)", () => {
         key: "preferred.search_mode",
         op: "add",
         value: "search_text",
-        evidence: "tool=search_text sampled_calls=2 tool_calls=2", // derived from the real 2-row window, not a placeholder
+        evidence: '["episode","s1",100]\ntool=search_text sampled_calls=2 tool_calls=2', // derived from the real 2-row window, not a placeholder
       },
       {
         key: "preferred.search_mode",
         op: "add",
         value: "vault_graph_search",
-        evidence: "tool=vault_graph_search sampled_calls=1 tool_calls=1",
+        evidence: '["episode","s2",200]\ntool=vault_graph_search sampled_calls=1 tool_calls=1',
       },
     ]);
   });
 
   it("extractPreferences: a -1 window WEAKENS an existing preferred.search_mode key", async () => {
     const db = edb0();
-    // Establish the key exactly the way a prior +1 extraction would (isolated from this test's own
-    // evidence, via applyPreferenceDeltas directly, so the -1 window below is the ONLY thing this
-    // call re-derives — extractPreferences has no "already processed" state, so a second call
-    // re-reads every eligible episode in scope, and mixing that re-read into the same DB as more
-    // +1 evidence would confound what this assertion is checking).
+    // Establish the key separately so this test isolates the negative window.
     // scopeCaller: "alice" — must match the -1 window's own caller below (seed()'s default), so
     // the extraction's weaken lands on this SAME partition row rather than a phantom '' one.
     applyPreferenceDeltas(
