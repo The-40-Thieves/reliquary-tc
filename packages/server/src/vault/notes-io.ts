@@ -100,10 +100,17 @@ const readWalkOptions = (abs: string) => ({
   },
 });
 
-function missingReadPath(abs: string): never {
-  const enoent = new Error(`ENOENT: no such file, open '${abs}'`) as NodeJS.ErrnoException;
+/** An ENOENT that names the path relative to the vault: Node's own message carries the host path. */
+function enoentAt(detail: string, abs: string): NodeJS.ErrnoException {
+  const enoent = new Error(`ENOENT: ${detail} '${vaultDetailPath(abs)}'`) as NodeJS.ErrnoException;
   enoent.code = "ENOENT";
-  throw enoent;
+  return enoent;
+}
+
+/** `e` itself, unless it is Node's own ENOENT: then the vault-relative one. */
+function relativeEnoent(e: unknown, detail: string, abs: string): unknown {
+  const raw = !(e instanceof ReliquaryTcError) && (e as NodeJS.ErrnoException).code === "ENOENT";
+  return raw ? enoentAt(detail, abs) : e;
 }
 
 /** Classify a native refusal without following any component while deciding ENOENT vs refusal. */
@@ -122,11 +129,10 @@ function mapNativeReadError(e: unknown, abs: string): never {
     }
   } catch (error) {
     if (error instanceof ReliquaryTcError) throw error;
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") missingReadPath(path);
-    throw fallbackReadRefused(
-      `native path classification failed: ${(error as Error).message}`,
-      path,
-    );
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw enoentAt("no such file, open", path);
+    }
+    throw fallbackReadRefused("native path classification failed", path);
   }
   throw fallbackReadRefused((e as Error).message, path);
 }
@@ -140,8 +146,14 @@ function mapNativeReadError(e: unknown, abs: string): never {
 function fallbackOpen(abs: string): number {
   const path = normalize(abs);
   refuseJsThroughPin(path);
-  const ancestors = walkDirectoriesNoFollow(dirname(path), readWalkOptions(path));
-  const leaf = lstatSync(path, { bigint: true });
+  let ancestors: ReturnType<typeof walkDirectoriesNoFollow>;
+  let leaf: BigIntStats;
+  try {
+    ancestors = walkDirectoriesNoFollow(dirname(path), readWalkOptions(path));
+    leaf = lstatSync(path, { bigint: true });
+  } catch (error) {
+    throw relativeEnoent(error, "no such file, open", path);
+  }
   if (leaf.isSymbolicLink()) {
     throw fallbackReadRefused("refusing symlinked or missing file", path);
   }
@@ -157,7 +169,7 @@ function fallbackOpen(abs: string): number {
     if ((e as NodeJS.ErrnoException).code === "ELOOP") {
       throw fallbackReadRefused("refusing symlinked or missing file", path);
     }
-    throw e;
+    throw relativeEnoent(e, "no such file, open", path);
   }
   try {
     if (opened.dev !== leaf.dev || opened.ino !== leaf.ino) {
@@ -400,25 +412,25 @@ export function writeFileAtomic(
       // A safe-write rejection (a symlinked path component, or the target itself a symlink) is
       // acl_denied. An unpinned path with a missing parent (createDirs=false) keeps ENOENT semantics,
       // matching the JS temp-open below. A pinned refusal is never remapped, as hardDelete does.
-      if (pinned === undefined && !existsSync(dirname(path))) {
-        const enoent = new Error(
-          `ENOENT: no such file or directory, open '${abs}'`,
-        ) as NodeJS.ErrnoException;
-        enoent.code = "ENOENT";
-        throw enoent;
-      }
+      if (pinned === undefined && !existsSync(dirname(path)))
+        throw enoentAt("no such file or directory, open", abs);
       throw err.aclDenied(`safe write refused the path: ${(e as Error).message}`, {
         path: vaultDetailPath(abs),
       });
     }
   }
-  const tmp = writeTempFile(abs, data, false);
+  let tmp: string;
+  try {
+    tmp = writeTempFile(abs, data, false);
+  } catch (e) {
+    throw relativeEnoent(e, "no such file or directory, open", abs);
+  }
   try {
     if (opts.exclusive) commitNoReplace(tmp, abs);
     else renameSync(tmp, abs);
   } catch (e) {
     removeTemp(tmp);
-    throw e;
+    throw relativeEnoent(e, "no such file or directory, open", abs);
   }
 }
 
@@ -482,13 +494,7 @@ export function moveNoReplace(fromAbs: string, toAbs: string): void {
       return;
     } catch (e) {
       if (isNativeExists(e)) throw noteExistsConcurrently();
-      if (!existsSync(fromAbs)) {
-        const enoent = new Error(
-          `ENOENT: no such file or directory, rename '${fromAbs}'`,
-        ) as NodeJS.ErrnoException;
-        enoent.code = "ENOENT";
-        throw enoent;
-      }
+      if (!existsSync(fromAbs)) throw enoentAt("no such file or directory, rename", fromAbs);
       throw err.aclDenied(`safe rename refused the path: ${(e as Error).message}`, {
         path: vaultDetailPath(toAbs),
       });
@@ -496,13 +502,20 @@ export function moveNoReplace(fromAbs: string, toAbs: string): void {
   }
   refuseJsThroughPin(fromAbs);
   refuseJsThroughPin(toAbs);
-  ensureDirNoFollow(dirname(fromAbs), false);
-  ensureDirNoFollow(dirname(toAbs), false);
+  for (const abs of [fromAbs, toAbs]) {
+    try {
+      ensureDirNoFollow(dirname(abs), false);
+    } catch (e) {
+      throw relativeEnoent(e, "no such file or directory, rename", abs);
+    }
+  }
   try {
     linkSync(fromAbs, toAbs);
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === "EEXIST") throw noteExistsConcurrently();
+    if (code === "ENOENT")
+      throw enoentAt("no such file or directory, rename", existsSync(fromAbs) ? toAbs : fromAbs);
     // No hard links here (FAT/exFAT, some network mounts). A rename would REPLACE a destination
     // created after any check, so copy the bytes with an exclusive create instead, then drop the
     // source: still no-replace, never check-then-rename.
@@ -521,7 +534,7 @@ export function moveNoReplace(fromAbs: string, toAbs: string): void {
     } catch {
       // best-effort cleanup: nothing more to do if the removal fails
     }
-    throw e;
+    throw relativeEnoent(e, "no such file or directory, rename", fromAbs);
   }
 }
 

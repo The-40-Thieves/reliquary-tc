@@ -3,6 +3,7 @@
 // throttle, the per-item partial-failure report, and the bulk_move dry_run/real +
 // all-or-nothing backlink rewrite. The RateLimiter clock is pinned via ctx.now so
 // the throttle assertions are deterministic.
+import { tmpdir } from "node:os";
 import type { ToolResult } from "@the-40-thieves/reliquary-tc-shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { RateLimiter } from "../src/throttle";
@@ -29,6 +30,24 @@ let v: M6Vault | undefined;
 afterEach(() => v?.cleanup());
 
 describe("bulk_create_notes", () => {
+  it("redacts untyped filesystem errors like write_note", async () => {
+    v = makeM6Vault({ register, handlerAclOnly: true });
+    const path = `${"n".repeat(300)}.md`;
+    const single = await v.call("write_note", { vault: "test", path, content: "x" });
+    const bulk = data<{ results: { error: { code: string; message: string } }[] }>(
+      await v.callConfirmed("bulk_create_notes", {
+        vault: "test",
+        items: [{ path, content: "x" }],
+      }),
+    );
+    if (single.ok) throw new Error("expected write failure");
+    const error = bulk.results[0]?.error;
+    expect(error?.message).not.toContain(v.root);
+    expect(error?.message).not.toContain(tmpdir());
+    expect(error?.code).toBe("internal_error");
+    expect(error?.message).toBe(single.error.message);
+  });
+
   it("creates a batch and reports per-item results (HITL-confirmed)", async () => {
     v = makeM6Vault({ register });
     const out = data<{

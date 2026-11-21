@@ -39,7 +39,7 @@ import {
 import { ResponseFormatInput, resolveResponseFormat } from "../../util/response-format";
 import { enforcePathAcl, ImmutableRewriteSkips } from "../../vault/acl-path";
 import { memoizedReadableResolved } from "../../vault/acl-read-filter";
-import { runBulk } from "../../vault/bulk";
+import { bulkItemError, runBulk } from "../../vault/bulk";
 import {
   callerMayReadNote,
   refuseUnreadableBatch,
@@ -425,11 +425,7 @@ export function buildBulkTools(deps: M6Deps): ToolDefinition[] {
               throw err.noteExists("destination already exists; set overwrite", { path: toRel });
             return { from: m.from, to: m.to, fromRel, toRel, destExists, ok: true };
           } catch (e) {
-            const error = (
-              e instanceof ReliquaryTcError
-                ? e
-                : new ReliquaryTcError("internal_error", (e as Error).message)
-            ).toJSON();
+            const error = bulkItemError(e);
             return { from: m.from, to: m.to, ok: false, error };
           }
         });
@@ -537,11 +533,7 @@ export function buildBulkTools(deps: M6Deps): ToolDefinition[] {
             enforceMemoryDefenseOnNoteWrite(mdConfig, r.toRel, raw, { metrics: deps.metrics });
           } catch (e) {
             r.ok = false;
-            r.error = (
-              e instanceof ReliquaryTcError
-                ? e
-                : new ReliquaryTcError("internal_error", (e as Error).message)
-            ).toJSON();
+            r.error = bulkItemError(e);
             moveMap.delete(r.fromRel);
           }
         }
@@ -597,11 +589,7 @@ export function buildBulkTools(deps: M6Deps): ToolDefinition[] {
                   const row = rows.find((r) => r.ok && r.toRel === m.toRel);
                   if (!row) throw e;
                   row.ok = false;
-                  row.error = (
-                    e instanceof ReliquaryTcError
-                      ? e
-                      : new ReliquaryTcError("internal_error", (e as Error).message)
-                  ).toJSON();
+                  row.error = bulkItemError(e);
                   moveMap.delete(m.fromRel);
                   throw new PlanChanged();
                 }

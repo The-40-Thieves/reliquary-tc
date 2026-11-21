@@ -4,7 +4,13 @@ import type { FolderAcl } from "../acl";
 import type { ScanSteps } from "../util/scan-steps";
 import { buildVaultIndex, resolveTarget } from "../vault/links";
 import { ScanWarnings } from "./scan-warnings";
-import { isExternal, linksOf, readableNotesSteps } from "./wiki-scan";
+import {
+  isExternal,
+  linksOf,
+  readableFileIndexSteps,
+  readableNotesSteps,
+  resolvesFile,
+} from "./wiki-scan";
 
 export interface LinkGraph {
   notes: string[];
@@ -24,6 +30,7 @@ export function* buildLinkGraphSteps(
 ): ScanSteps<LinkGraph> {
   const notes = yield* readableNotesSteps(root, acl, grantedScopes);
   const index = buildVaultIndex(notes);
+  const files = yield* readableFileIndexSteps(root, acl, grantedScopes);
   const out = new Map<string, Set<string>>();
   const inn = new Map<string, Set<string>>();
   for (const p of notes) {
@@ -43,7 +50,7 @@ export function* buildLinkGraphSteps(
       if (r.resolved && r.target_path && r.target_path !== p) {
         out.get(p)?.add(r.target_path);
         inn.get(r.target_path)?.add(p);
-      } else if (!r.resolved) {
+      } else if (!r.resolved && !resolvesFile(files, l.target)) {
         unresolved++;
       }
     }

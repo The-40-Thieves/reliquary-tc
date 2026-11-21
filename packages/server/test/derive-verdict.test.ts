@@ -1040,7 +1040,8 @@ describe("extractPreferences groups derived windows by (session_id, verdict_at) 
         op: "add",
         value: "search_text",
         // sampled_calls=2 (both rows in the window), not 1 per row — one window, one observation.
-        evidence: "tool=search_text sampled_calls=2 tool_calls=1",
+        evidence:
+          '["episode","sess_a",1899999999000]\ntool=search_text sampled_calls=2 tool_calls=1',
       },
     ]);
   });

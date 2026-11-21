@@ -160,13 +160,16 @@ describe("extractPreferences: citation evidence (THE-644, off by default)", () =
     });
     const r = await extractPreferences(edb, V1, { nowMs: NOW, cacheDb });
     expect(r).toMatchObject({ skipped: false, applied: 1 });
+    expect((await extractPreferences(edb, V1, { nowMs: NOW + 1, cacheDb })).applied).toBe(0);
     expect(preferenceProfile(edb, V1, null).entries).toEqual([
       expect.objectContaining({ key: "preferred.search_mode", value: "search_vault", weight: 1 }),
     ]);
     const ev = edb.prepare("SELECT evidence FROM preference_deltas WHERE vault_id = ?").get(V1) as {
       evidence: string;
     };
-    expect(ev.evidence).toBe("citation tool=search_vault confirmed=1 rejected=0");
+    expect(ev.evidence).toBe(
+      '["citation","eg1"]\ncitation tool=search_vault confirmed=1 rejected=0',
+    );
   });
 
   it("a REJECTED citation (no confirmed in the window) weakens an existing key", async () => {
@@ -278,7 +281,9 @@ describe("extractPreferences: citation evidence (THE-644, off by default)", () =
     const ev = edb.prepare("SELECT evidence FROM preference_deltas WHERE vault_id = ?").get(V1) as {
       evidence: string;
     };
-    expect(ev.evidence).toBe("citation tool=search_text confirmed=2 rejected=1");
+    expect(ev.evidence).toBe(
+      '["citation","eg1"]\ncitation tool=search_text confirmed=2 rejected=1',
+    );
   });
 
   it("a chunk absent from THIS vault's cache.db chunks table is dropped, never attributed (foreign vault)", async () => {
