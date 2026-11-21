@@ -62,7 +62,7 @@ describe("inspect_acl parity with enforcement", () => {
       symlinkSync(join(v.root, "target", "a.md"), join(v.root, "raw", "alias.md"));
       const vault = v;
       expect(() => enforcePathAcl(vault.acl, "write", "raw/alias.md", vault.root, ["*"])).toThrow();
-      const out = data<{ allowed: boolean }>(
+      const out = data<{ allowed: boolean; denied_by?: string; matched_rule?: string | null }>(
         await v.call("inspect_acl", {
           vault: "test",
           path: "raw/alias.md",
@@ -70,7 +70,11 @@ describe("inspect_acl parity with enforcement", () => {
           scopes: ["*"],
         }),
       );
-      expect(out.allowed).toBe(false);
+      expect(out).toMatchObject({
+        allowed: false,
+        denied_by: "write_paths",
+        matched_rule: "raw/**",
+      });
     },
   );
 
