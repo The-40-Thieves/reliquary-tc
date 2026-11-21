@@ -15,7 +15,12 @@ import { globPredicate } from "../acl";
 import { drainSteps, type ScanSteps } from "../util/scan-steps";
 import { readableEntry } from "../vault/acl-read-filter";
 import { fmHas } from "../vault/frontmatter";
-import { buildVaultIndex, type ExtractedLink, resolveTarget } from "../vault/links";
+import {
+  buildVaultIndex,
+  type ExtractedLink,
+  normalizeLinkTarget,
+  resolveTarget,
+} from "../vault/links";
 import { walkVaultSteps } from "../vault/paths";
 import { matchHeadingBoundary } from "./m1/notes/heading-syntax";
 import { isGeneratedWikiPath, rawPathFilter } from "./m7/knowledge/wiki-folder";
@@ -57,6 +62,34 @@ export function readableNotes(
   sub?: string,
 ): string[] {
   return drainSteps(readableNotesSteps(root, acl, grantedScopes, sub));
+}
+
+export function* readableFileIndexSteps(
+  root: string,
+  acl: FolderAcl | undefined,
+  grantedScopes: Iterable<string>,
+): ScanSteps<{ paths: Set<string>; names: Set<string> }> {
+  const paths = new Set<string>();
+  const names = new Set<string>();
+  for (const entry of yield* walkVaultSteps(root)) {
+    if (readableEntry(acl, entry, grantedScopes)) {
+      const path = entry.relPath.toLowerCase();
+      paths.add(path);
+      names.add(path.slice(path.lastIndexOf("/") + 1));
+    }
+    yield;
+  }
+  return { paths, names };
+}
+
+export function resolvesFile(
+  index: { paths: Set<string>; names: Set<string> },
+  target: string,
+): boolean {
+  const path = normalizeLinkTarget(target).trim().toLowerCase();
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  if (!/\.[^./]+$/.test(name)) return false;
+  return path.includes("/") ? index.paths.has(path) : index.names.has(name);
 }
 
 /** A note's links for a scan: property links, then body links. Bad frontmatter YAML does not fail
@@ -128,6 +161,7 @@ export function* scanUnresolvedSteps(
   const { root, acl, grantedScopes } = scope;
   const scan = yield* readableNotesSteps(root, acl, grantedScopes, opts.folder);
   const index = buildVaultIndex(yield* readableNotesSteps(root, acl, grantedScopes));
+  const files = yield* readableFileIndexSteps(root, acl, grantedScopes);
   const unresolved: Array<Record<string, unknown>> = [];
   let truncated = false;
   for (const p of scan) {
@@ -135,7 +169,7 @@ export function* scanUnresolvedSteps(
       if (l.inCodeblock) continue;
       if (isExternal(l.kind, l.target)) continue;
       if (l.target === "" || l.target.startsWith("#")) continue;
-      if (resolveTarget(index, l.target).resolved) continue;
+      if (resolveTarget(index, l.target).resolved || resolvesFile(files, l.target)) continue;
       if (unresolved.length >= opts.limit) {
         truncated = true;
         break;
