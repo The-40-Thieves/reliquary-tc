@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { provisionCacheDb } from "../src/db/provision";
-import { issueElicitToken, verifyAndConsumeElicit } from "../src/elicit";
+import { elicitRequiredError, issueElicitToken, verifyAndConsumeElicit } from "../src/elicit";
 import { openMemoryDb } from "./helpers";
 
 function freshDb() {
@@ -8,6 +8,46 @@ function freshDb() {
   provisionCacheDb(db);
   return db;
 }
+
+describe("elicitRequiredError", () => {
+  it.each([
+    { caller: "alice", stateFp: "state-123" },
+    { caller: null, stateFp: null },
+    { caller: "alice", stateFp: undefined },
+  ])("explains approval without changing details (%j)", ({ caller, stateFp }) => {
+    const db = freshDb();
+    const details = {
+      args_hash: "hash-123",
+      tool: "write_note",
+      vault: "v1",
+      path: "notes/a.md",
+      proposed: { overwrite: true },
+    };
+    try {
+      const error = elicitRequiredError(
+        { db, vaultId: "v1", caller },
+        "hash-123",
+        stateFp === undefined ? undefined : () => stateFp,
+        details,
+      );
+      expect(error.code).toBe("elicit_required");
+      expect(error.retryable).toBe(false);
+      expect(error.details).toStrictEqual({
+        ...details,
+        ...(stateFp != null ? { state_fp: stateFp } : {}),
+        ...(caller !== null ? { caller } : {}),
+      });
+      expect(details).not.toHaveProperty("state_fp");
+      expect(details).not.toHaveProperty("caller");
+      expect(error.message).toContain("approval gate, not a failure");
+      expect(error.message).toContain("Ask the human to approve");
+      expect(error.message).toContain("then retry the same call with the minted token");
+      expect(error.message).toContain("do not use another route to make the change");
+    } finally {
+      db.close();
+    }
+  });
+});
 
 describe("elicit token store", () => {
   it("issues a 32-char token, then verifies and consumes it exactly once", () => {

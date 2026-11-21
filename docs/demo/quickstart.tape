@@ -72,7 +72,7 @@ Sleep 3s
 Type `claude -p "overwrite the Welcome note with a one-line summary of what reliquary-tc does"`
 Enter
 Sleep 3s
-Wait /elicit_required|human confirmation required/
+Wait /elicit_required|This is an approval gate/
 
 # 5. The confirm: mint the token the error named, then resend the same write_note call with it —
 # the same two-step Claude Code performs automatically for elicitation-capable clients, made
