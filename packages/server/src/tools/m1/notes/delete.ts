@@ -24,6 +24,7 @@ export function createDeleteNoteTool(deps: M1Deps): ToolDefinition {
     outputSchema: DeleteNoteOutput,
     requiredScopes: ["delete:notes"],
     destructive: true,
+    acceptsIdempotencyKey: true,
     handler: (input, ctx) => {
       const v = deps.vaultRegistry.resolve(input.vault);
       const rel = normalizeVaultPath(input.path);
@@ -46,6 +47,10 @@ export function createDeleteNoteTool(deps: M1Deps): ToolDefinition {
       // is the documented undo and a permanent delete leaves no other recovery path at all.
       if (!deps.snapshots?.enabled) deps.onSnapshotSkipped?.(v.id, rel, "delete_note");
       captureSnapshot(ctx.db, deps.snapshots, v.id, rel, raw, "delete_note", ctx.now);
+      // Marked BEFORE the removal, not after: a delete cannot be undone, so a crash or a fault
+      // between the two must never leave a key that lets a retry delete whatever is at this path
+      // by then. A removal that fails after this point is answered `indeterminate_outcome` on retry.
+      ctx.markEffectCommitted?.();
       let trashedTo: string | null = null;
       if (input.permanent) hardDelete(abs);
       else trashedTo = trashNote(v.root, rel);
