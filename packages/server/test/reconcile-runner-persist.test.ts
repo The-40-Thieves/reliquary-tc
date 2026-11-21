@@ -78,7 +78,7 @@ describe("createReconcileRunner persists the leader's outcome to cache.db (GH #9
     });
   });
 
-  it("follower metadata readiness observes persisted notes across epochs and stays ready", async () => {
+  it("follower metadata readiness follows the current leader epoch's persisted notes flag", async () => {
     const db = provisionedDb();
     const ready = metadataNotesReady(db, { isLeader: () => false }, { notesReady: false });
     expect(ready()).toBe(false);
@@ -94,10 +94,13 @@ describe("createReconcileRunner persists the leader's outcome to cache.db (GH #9
       return cleanIndexStats();
     });
     await runner(new AbortController().signal);
+    expect(ready()).toBe(true);
+    // A successor promotes: the predecessor's row no longer speaks for the leader, even though this
+    // follower saw it ready a moment ago.
     bumpLeaderEpoch(db, 1);
     expect(readPersistedReconcileState(db)).toBeUndefined();
-    expect(ready()).toBe(true);
-    db.prepare("DELETE FROM reconcile_state").run();
+    expect(ready()).toBe(false);
+    await runner(new AbortController().signal);
     expect(ready()).toBe(true);
   });
 

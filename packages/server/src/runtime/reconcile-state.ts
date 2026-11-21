@@ -223,19 +223,9 @@ export function metadataNotesReady(
   role: { isLeader: () => boolean },
   health: { notesReady: boolean },
 ): () => boolean {
-  let ready = false;
   return () => {
-    if (role.isLeader()) return health.notesReady;
-    if (health.notesReady || ready) return true;
-    try {
-      if (!reconcileTableExists(db)) return false;
-      const row = cachedPrepare(db, "SELECT notes_ready FROM reconcile_state WHERE id = 1").get() as
-        | { notes_ready: number }
-        | undefined;
-      ready = row?.notes_ready === 1;
-    } catch {
-      return false;
-    }
-    return ready;
+    if (role.isLeader() || health.notesReady) return health.notesReady;
+    // Through the epoch-checked reader: a row a superseded leader wrote is not this leader's word.
+    return readPersistedReconcileState(db)?.notesReady === true;
   };
 }
