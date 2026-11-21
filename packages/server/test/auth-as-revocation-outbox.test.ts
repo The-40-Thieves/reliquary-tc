@@ -80,7 +80,7 @@ describe("revocation outbox: a family", () => {
     expect(outbox(flow)).toHaveLength(1); // exactly the jti whose write failed
     const dead = [];
     for (const t of tokens) dead.push(await mcpPing(flow, t));
-    expect(dead.filter((s) => s === 401)).toHaveLength(2);
+    expect(dead.filter((s) => s === 401)).toHaveLength(3);
 
     drainRevocations(flow.db, flow.registry);
     expect(outbox(flow)).toHaveLength(0);
@@ -110,7 +110,8 @@ describe("revocation outbox: a family", () => {
       revokeFamily(flow.db, flow.registry, familyOf(flow), "test", flow.clock.t),
     ).toThrow();
     expect(rows(flow, "SELECT 1 FROM refresh_tokens WHERE revoked_at IS NULL")).toHaveLength(3);
-    for (const t of tokens) expect(await mcpPing(flow, t)).toBe(200);
+    // Nothing was revoked, but with the outbox unreadable the verifier cannot know that: it refuses.
+    for (const t of tokens) expect(await mcpPing(flow, t)).toBe(401);
   });
 
   it("a refresh on the dead family repairs the leftover revocation before it decides anything", async () => {
@@ -186,7 +187,8 @@ describe("revocation outbox: a grant", () => {
     flow.db.exec("DROP TABLE revocation_outbox");
     expect(() => revokeGrant(flow.db, flow.registry, grantId, "operator", flow.clock.t)).toThrow();
     expect(rows(flow, "SELECT 1 FROM grants WHERE revoked_at IS NOT NULL")).toHaveLength(0);
-    for (const t of tokens) expect(await mcpPing(flow, t)).toBe(200);
+    // Nothing was revoked, but with the outbox unreadable the verifier cannot know that: it refuses.
+    for (const t of tokens) expect(await mcpPing(flow, t)).toBe(401);
   });
 });
 
