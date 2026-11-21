@@ -136,7 +136,7 @@ durable leases separate from execution/retry policy.
 
 - **CLI** — `src/cli.ts`, args in `src/cli/args.ts`. Subcommands include `index`,
   `metrics`, `contribution-report`, `citation-infer`, `reflect`, `config show`.
-- **MCP** — `src/mcp/registry.ts` dispatch; a 3-meta-tool facade fronts 151 registered tools.
+- **MCP** — `src/mcp/registry.ts` dispatch; a 3-meta-tool facade fronts the registered tools.
   STDIO and Streamable HTTP transports in `src/transports/`.
 - **Obsidian plugin** — `packages/plugin/src/routes.ts` REST surface, reached via `src/bridge/`.
 - **Scheduled** — one unified scheduler (`src/scheduler/`), registrations in `cli.ts`,

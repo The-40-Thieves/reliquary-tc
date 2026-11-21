@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   factRules,
   lockedSdkVersions,
+  narrativeFiles,
   type ScanStats,
   scanFacts,
   scanSdkVersions,
@@ -106,9 +107,16 @@ describe("scanFacts (narrative fact gate: tool count forbidden, curated facts eq
     ["**reliquary-tc** | 999 (3-tool facade)", 999],
     ["**999 capabilities across 31 domains**", 999],
     ["the surface is 999 tools / 31 domains", 999],
+    ["a 3-meta-tool facade fronts 151 registered tools", 151],
+    ["advertises just **five tools** instead of a wall of 164", 164],
+    ["reliquary-tc registers 150 capabilities and advertises three by default", 150],
   ])("flags the tool-count phrasing %j", (text, n) => {
     const v = scanFacts(text, RULES).filter((x) => x.fact === "toolCount");
     expect(v, text).toEqual([expect.objectContaining({ found: n, expected: null })]);
+  });
+
+  it("does NOT flag a wall count unrelated to tools", () => {
+    expect(scanFacts("a wall of 164 bricks", RULES)).toEqual([]);
   });
 
   it("skips a line marked facts-check:ignore (intentional historical value)", () => {
@@ -159,6 +167,17 @@ describe("scanFacts (narrative fact gate: tool count forbidden, curated facts eq
       expect.objectContaining({ fact: "goldenSetSize", found: 136, expected: 250 }),
     ]);
   });
+});
+
+describe("narrative scan scope", () => {
+  const root = fileURLToPath(new URL("../../../", import.meta.url));
+
+  it.each(["TREE.md", "docs/adr/0006-the-default-surface-is-the-triad.md"])(
+    "includes %s",
+    (file) => {
+      expect(narrativeFiles(root)).toContain(file);
+    },
+  );
 });
 
 // THE-601: the gate could pass VACUOUSLY. It reports success by finding nothing, so "found no

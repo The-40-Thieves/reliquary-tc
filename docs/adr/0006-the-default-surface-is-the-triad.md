@@ -1,6 +1,6 @@
 # The default tool surface is the triad, and stays that way until something measures otherwise
 
-reliquary-tc registers 150 capabilities and advertises **three** by default. `toolFacade.mode`
+reliquary-tc registers the full capability surface and advertises **three** by default. `toolFacade.mode`
 defaults to `triad`, so a fresh install hands a client `find_capability`, `describe_capability` and
 `call_capability`, and nothing else. Every capability remains callable; only the advertised surface
 is collapsed.

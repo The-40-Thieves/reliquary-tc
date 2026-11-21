@@ -153,7 +153,7 @@ scope and generated from the tool registry, is the
 
 ### The interface: five tools, every governed capability
 
-By default the server advertises just **five tools** instead of a wall of 164: three meta-tools,
+By default the server advertises just **five tools** instead of the full surface: three meta-tools,
 `find_capability`, `describe_capability`, `call_capability` (invoke by name, same pipeline as a
 direct call), plus the standard `search` and `fetch` tools ChatGPT deep research needs. `toolFacade.mode` selects `triad` (default), `domain` or `flat` (a superseded `auto` also exists)
 — boundary-only, no gate bypassed. Per-client advice: [MCP clients](https://docs.the40thieves.dev/reliquary-tc/getting-started/mcp-clients#choosing-a-facade-mode-per-client).
