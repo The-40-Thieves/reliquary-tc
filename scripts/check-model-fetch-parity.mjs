@@ -54,6 +54,8 @@ export const PARITY_SYMBOLS = [
   "writeLockOwnerAtomic",
   "tryAcquireLock",
   "releaseLock",
+  "startLockRefresh",
+  "LOCK_REFRESH_INTERVAL_MS",
   "LOCK_WAIT_DEADLINE_MULTIPLIER",
   "DEFAULT_LOCK_STALE_MS",
   "DEFAULT_LOCK_POLL_MS",

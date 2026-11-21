@@ -227,3 +227,18 @@ test("compareModelFetchFiles: every real DOCUMENTED_DELTAS entry carries a non-e
     );
   }
 });
+
+test("heartbeat declarations are required by the model-fetch parity gate", () => {
+  const embedderSource = readFileSync(
+    new URL("../packages/embedder-local/src/model-fetch.ts", import.meta.url),
+    "utf8",
+  );
+  for (const name of ["LOCK_REFRESH_INTERVAL_MS", "startLockRefresh"]) {
+    assert.ok(PARITY_SYMBOLS.includes(name), `${name} must be gated`);
+    const rerankerSource = embedderSource.replace(extractSymbol(embedderSource, name), "");
+    const result = compareModelFetchFiles({ embedderSource, rerankerSource }).find(
+      (entry) => entry.name === name,
+    );
+    assert.equal(result.status, "missing");
+  }
+});
