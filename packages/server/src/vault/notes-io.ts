@@ -107,8 +107,10 @@ function enoentAt(detail: string, abs: string): NodeJS.ErrnoException {
   return enoent;
 }
 
-function missingReadPath(abs: string): never {
-  throw enoentAt("no such file, open", abs);
+/** `e` itself, unless it is Node's own ENOENT: then the vault-relative one. */
+function relativeEnoent(e: unknown, detail: string, abs: string): unknown {
+  const raw = !(e instanceof ReliquaryTcError) && (e as NodeJS.ErrnoException).code === "ENOENT";
+  return raw ? enoentAt(detail, abs) : e;
 }
 
 /** Classify a native refusal without following any component while deciding ENOENT vs refusal. */
@@ -127,7 +129,9 @@ function mapNativeReadError(e: unknown, abs: string): never {
     }
   } catch (error) {
     if (error instanceof ReliquaryTcError) throw error;
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") missingReadPath(path);
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw enoentAt("no such file, open", path);
+    }
     throw fallbackReadRefused("native path classification failed", path);
   }
   throw fallbackReadRefused((e as Error).message, path);
@@ -148,9 +152,7 @@ function fallbackOpen(abs: string): number {
     ancestors = walkDirectoriesNoFollow(dirname(path), readWalkOptions(path));
     leaf = lstatSync(path, { bigint: true });
   } catch (error) {
-    if (error instanceof ReliquaryTcError) throw error;
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") missingReadPath(path);
-    throw error;
+    throw relativeEnoent(error, "no such file, open", path);
   }
   if (leaf.isSymbolicLink()) {
     throw fallbackReadRefused("refusing symlinked or missing file", path);
@@ -167,8 +169,7 @@ function fallbackOpen(abs: string): number {
     if ((e as NodeJS.ErrnoException).code === "ELOOP") {
       throw fallbackReadRefused("refusing symlinked or missing file", path);
     }
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") missingReadPath(path);
-    throw e;
+    throw relativeEnoent(e, "no such file, open", path);
   }
   try {
     if (opened.dev !== leaf.dev || opened.ino !== leaf.ino) {
@@ -422,16 +423,14 @@ export function writeFileAtomic(
   try {
     tmp = writeTempFile(abs, data, false);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT")
-      throw enoentAt("no such file or directory, open", abs);
-    throw e;
+    throw relativeEnoent(e, "no such file or directory, open", abs);
   }
   try {
     if (opts.exclusive) commitNoReplace(tmp, abs);
     else renameSync(tmp, abs);
   } catch (e) {
     removeTemp(tmp);
-    throw e;
+    throw relativeEnoent(e, "no such file or directory, open", abs);
   }
 }
 
@@ -503,8 +502,13 @@ export function moveNoReplace(fromAbs: string, toAbs: string): void {
   }
   refuseJsThroughPin(fromAbs);
   refuseJsThroughPin(toAbs);
-  ensureDirNoFollow(dirname(fromAbs), false);
-  ensureDirNoFollow(dirname(toAbs), false);
+  for (const abs of [fromAbs, toAbs]) {
+    try {
+      ensureDirNoFollow(dirname(abs), false);
+    } catch (e) {
+      throw relativeEnoent(e, "no such file or directory, rename", abs);
+    }
+  }
   try {
     linkSync(fromAbs, toAbs);
   } catch (e) {
@@ -530,7 +534,7 @@ export function moveNoReplace(fromAbs: string, toAbs: string): void {
     } catch {
       // best-effort cleanup: nothing more to do if the removal fails
     }
-    throw e;
+    throw relativeEnoent(e, "no such file or directory, rename", fromAbs);
   }
 }
 

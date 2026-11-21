@@ -62,6 +62,10 @@ describe("ReadRefusals", () => {
       "a move of a missing note",
       (root: string) => moveNoReplace(join(root, "notes", "gone.md"), join(root, "notes", "b.md")),
     ],
+    [
+      "a move from a missing folder",
+      (root: string) => moveNoReplace(join(root, "nodir", "a.md"), join(root, "notes", "b.md")),
+    ],
   ])("%s reports ENOENT without the host path", (_name, run) => {
     const root = makeTempDir("obtc-enoent-relative-");
     cleanups.push(() => rmTemp(root));
