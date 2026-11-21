@@ -18,7 +18,8 @@ export function isHardLinkedFile(
 ): boolean {
   try {
     const st = stat(abs);
-    return st?.isFile() === true && st.nlink > 1;
+    // `!(n <= 1)` and not `n > 1`: a count that is not a number must refuse too.
+    return st?.isFile() === true && !(st.nlink <= 1);
   } catch (e) {
     const code = (e as NodeJS.ErrnoException | undefined)?.code;
     return code !== "ENOENT" && code !== "ENOTDIR";
