@@ -101,7 +101,9 @@ const readWalkOptions = (abs: string) => ({
 });
 
 function missingReadPath(abs: string): never {
-  const enoent = new Error(`ENOENT: no such file, open '${abs}'`) as NodeJS.ErrnoException;
+  const enoent = new Error(
+    `ENOENT: no such file, open '${vaultDetailPath(abs)}'`,
+  ) as NodeJS.ErrnoException;
   enoent.code = "ENOENT";
   throw enoent;
 }
@@ -123,10 +125,7 @@ function mapNativeReadError(e: unknown, abs: string): never {
   } catch (error) {
     if (error instanceof ReliquaryTcError) throw error;
     if ((error as NodeJS.ErrnoException).code === "ENOENT") missingReadPath(path);
-    throw fallbackReadRefused(
-      `native path classification failed: ${(error as Error).message}`,
-      path,
-    );
+    throw fallbackReadRefused("native path classification failed", path);
   }
   throw fallbackReadRefused((e as Error).message, path);
 }
@@ -141,7 +140,13 @@ function fallbackOpen(abs: string): number {
   const path = normalize(abs);
   refuseJsThroughPin(path);
   const ancestors = walkDirectoriesNoFollow(dirname(path), readWalkOptions(path));
-  const leaf = lstatSync(path, { bigint: true });
+  let leaf: BigIntStats;
+  try {
+    leaf = lstatSync(path, { bigint: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") missingReadPath(path);
+    throw error;
+  }
   if (leaf.isSymbolicLink()) {
     throw fallbackReadRefused("refusing symlinked or missing file", path);
   }
@@ -402,7 +407,7 @@ export function writeFileAtomic(
       // matching the JS temp-open below. A pinned refusal is never remapped, as hardDelete does.
       if (pinned === undefined && !existsSync(dirname(path))) {
         const enoent = new Error(
-          `ENOENT: no such file or directory, open '${abs}'`,
+          `ENOENT: no such file or directory, open '${vaultDetailPath(abs)}'`,
         ) as NodeJS.ErrnoException;
         enoent.code = "ENOENT";
         throw enoent;
@@ -484,7 +489,7 @@ export function moveNoReplace(fromAbs: string, toAbs: string): void {
       if (isNativeExists(e)) throw noteExistsConcurrently();
       if (!existsSync(fromAbs)) {
         const enoent = new Error(
-          `ENOENT: no such file or directory, rename '${fromAbs}'`,
+          `ENOENT: no such file or directory, rename '${vaultDetailPath(fromAbs)}'`,
         ) as NodeJS.ErrnoException;
         enoent.code = "ENOENT";
         throw enoent;
