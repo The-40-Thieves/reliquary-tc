@@ -937,12 +937,11 @@ token (`idp_unavailable` in the auth log); there is no fallback to another key s
 `reliquary-tc doctor` (`auth.jwks-uri`) say which mode is active.
 
 **JWKS without an audience**: a JWKS key source (`jwks`, `jwksFile`, `jwksUri`) that binds no audience accepts a
-token its issuer minted for another service (confused deputy). The schema requires `audience` or `resource`,
-but `resource` is used as the audience only when Protected Resource Metadata is complete
-(`authorizationServers` set too), so a `resource`-only config bound nothing and logged only a stderr line (none for
-`jwksUri`). That is now a deprecation at startup, in `doctor` (`auth.jwks-audience`, a warning with the fix) and
-in `server_health`, and becomes a startup error in the next minor release; `auth.allowMissingAudience: true` is the
-explicit opt-out. A configured audience is enforced exactly as before.
+token its issuer minted for another service (confused deputy). The schema requires `audience` or `resource`
+with a JWKS, and the verifier enforces whichever is set: `audience` when given, otherwise `resource`, with or
+without `authorizationServers`. `auth.allowMissingAudience: true` is the explicit opt-out: `resource` is then
+enforced only when `authorizationServers` is set too. An auth object built without the schema, with a JWKS and
+neither value, still gets a deprecation at startup, in `doctor` (`auth.jwks-audience`) and in `server_health`.
 
 Accepted residuals, in addition to the one below: the OIDC address check decodes the well-known NAT64
 prefix `64:ff9b::/96` and the 6to4 and Teredo embeddings, but not an operator-specific NAT64 prefix (RFC 6052

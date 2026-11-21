@@ -262,7 +262,7 @@ export function plainHttpDeprecations(cfg: PlainHttpConfigView): string[] {
   }
   // A JWKS key source with no effective audience (auth.allowMissingAudience opts out).
   if (cfg.auth !== undefined && jwksWithoutAudience(cfg.auth)) {
-    out.push(jwksWithoutAudienceMessage(cfg.auth));
+    out.push(jwksWithoutAudienceMessage());
   }
   return out;
 }

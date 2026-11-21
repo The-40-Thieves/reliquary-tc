@@ -1,0 +1,4 @@
+---
+type: Security
+---
+- **`auth.resource` alone now binds the token audience on a JWKS-backed server.** With `auth.mode: jwt`, a JWKS key source (`jwks`, `jwksFile` or `jwksUri`), `auth.resource` set and no `auth.audience`, the server accepted a correctly signed token the same issuer had minted for another service, unless `auth.authorizationServers` was set too. It now enforces `auth.resource` as the audience in that case. **Action needed:** on such a server, tokens with no `aud`, or with a different `aud`, are refused after upgrading. Issue tokens with `aud` set to the resource (`token mint` already does), set `auth.audience` to the value your tokens carry, or set `auth.allowMissingAudience: true` to keep the old behaviour. Servers that verify only with a shared secret, and servers that already set `auth.audience` or `auth.authorizationServers`, are unchanged.
