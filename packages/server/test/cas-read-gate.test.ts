@@ -177,6 +177,9 @@ describe("write-only caller: CAS detail is read-gated", () => {
       v.cleanup();
       v = undefined;
     }
+    // Both appends succeeded: two equal refusals would also compare equal.
+    expect(results[0]).toHaveProperty("content_hash", null);
+    expect(results[0]).not.toHaveProperty("bytes_written");
     expect(results[0]).toEqual(results[1]);
   });
 
