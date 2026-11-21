@@ -6,10 +6,12 @@ describe("unresolved links to files", () => {
     const v = makeTestVault({
       files: {
         "note.md":
-          "![[TaskNotes/Views/tasks-default.base]] [[scripts/vault-audit.mjs]] [[picture.png]] [[x.base]]",
+          "![[TaskNotes/Views/tasks-default.base]] [[Scripts/Vault-Audit.mjs]] [[PICTURE.png]] [[x.base]] " +
+          "![page](docs/manual.pdf#page=2) [[manual.pdf#page=3]]",
         "TaskNotes/Views/tasks-default.base": "",
         "scripts/vault-audit.mjs": "",
         "images/picture.png": "",
+        "docs/manual.pdf": "",
       },
     });
     try {

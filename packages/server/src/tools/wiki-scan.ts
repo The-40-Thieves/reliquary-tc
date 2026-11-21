@@ -86,7 +86,14 @@ export function resolvesFile(
   index: { paths: Set<string>; names: Set<string> },
   target: string,
 ): boolean {
-  const path = normalizeLinkTarget(target).trim().toLowerCase();
+  const whole = normalizeLinkTarget(target).trim().toLowerCase();
+  if (matchesFile(index, whole)) return true;
+  // A markdown link keeps its fragment (`manual.pdf#page=2`): the file is the part before it.
+  const hash = whole.indexOf("#");
+  return hash > 0 && matchesFile(index, whole.slice(0, hash));
+}
+
+function matchesFile(index: { paths: Set<string>; names: Set<string> }, path: string): boolean {
   const name = path.slice(path.lastIndexOf("/") + 1);
   if (!/\.[^./]+$/.test(name)) return false;
   return path.includes("/") ? index.paths.has(path) : index.names.has(name);
