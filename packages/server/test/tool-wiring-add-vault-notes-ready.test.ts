@@ -7,13 +7,14 @@ import { join } from "node:path";
 import { ServerConfigSchema } from "@the-40-thieves/reliquary-tc-shared";
 import { describe, expect, it, vi } from "vitest";
 import { provisionCacheDb } from "../src/db/provision";
-import { readPersistedReconcileState } from "../src/runtime/reconcile-state";
+import { metadataNotesReady, readPersistedReconcileState } from "../src/runtime/reconcile-state";
 import { type M1WiringDeps, wireM1Tools } from "../src/runtime/tool-wiring";
 import { VaultRegistry } from "../src/vault/registry";
 import { openMemoryDb } from "./helpers";
 
 const captured = vi.hoisted(() => ({
   indexVault: undefined as undefined | ((vaultId: string) => Promise<unknown>),
+  ready: undefined as undefined | (() => boolean),
 }));
 
 vi.mock("../src/tools/m1", async (importOriginal) => {
@@ -41,7 +42,12 @@ describe("a runtime add_vault's notes pass persists notes_ready (tool-wiring.ts)
         embeddingProvider: {},
         embedConfig: { batchSize: 8, concurrency: 1, maxBatchTokens: 2048 },
         representation: {},
-        fts: { metadataIndex: () => ({}) },
+        fts: {
+          metadataIndex: (ready: () => boolean) => {
+            captured.ready = ready;
+            return {};
+          },
+        },
         indexHealth: { notesReady: false },
         indexReadableFor: () => () => true,
         sqlHooksFor: () => ({}),
@@ -54,7 +60,14 @@ describe("a runtime add_vault's notes pass persists notes_ready (tool-wiring.ts)
         },
       };
       wireM1Tools(deps as unknown as M1WiringDeps);
+      expect(captured.ready?.()).toBe(false);
       await captured.indexVault?.("v1");
+      deps.indexHealth.notesReady = false;
+      wireM1Tools({
+        ...deps,
+        metadataReady: metadataNotesReady(db, { isLeader: () => false }, deps.indexHealth),
+      } as unknown as M1WiringDeps);
+      expect(captured.ready?.()).toBe(true);
       expect(readPersistedReconcileState(db)).toEqual({
         reconcile: "pending",
         reconcileAt: null,

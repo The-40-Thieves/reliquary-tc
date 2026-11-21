@@ -4,7 +4,11 @@
 import { describe, expect, it } from "vitest";
 import { provisionCacheDb } from "../src/db/provision";
 import { createReconcileRunner } from "../src/runtime/plane-wiring";
-import { persistReconcileState, readPersistedReconcileState } from "../src/runtime/reconcile-state";
+import {
+  metadataNotesReady,
+  persistReconcileState,
+  readPersistedReconcileState,
+} from "../src/runtime/reconcile-state";
 import type { IndexStats, IndexVaultArgs } from "../src/search/indexer";
 import { bumpLeaderEpoch, readLeaderEpoch } from "../src/search/indexing/leader-epoch";
 import { cleanIndexStats, openMemoryDb } from "./helpers";
@@ -72,6 +76,29 @@ describe("createReconcileRunner persists the leader's outcome to cache.db (GH #9
       reconcileErrors: [],
       notesReady: true,
     });
+  });
+
+  it("follower metadata readiness observes persisted notes across epochs and stays ready", async () => {
+    const db = provisionedDb();
+    const ready = metadataNotesReady(db, { isLeader: () => false }, { notesReady: false });
+    expect(ready()).toBe(false);
+    persistReconcileState(
+      db,
+      { reconcile: "pending", reconcileAt: null, reconcileErrors: [] },
+      false,
+      0,
+    );
+    expect(ready()).toBe(false);
+    const runner = runnerFor(db, async (o) => {
+      o.onNotesPass?.();
+      return cleanIndexStats();
+    });
+    await runner(new AbortController().signal);
+    bumpLeaderEpoch(db, 1);
+    expect(readPersistedReconcileState(db)).toBeUndefined();
+    expect(ready()).toBe(true);
+    db.prepare("DELETE FROM reconcile_state").run();
+    expect(ready()).toBe(true);
   });
 
   it("an aborted pass (shutdown or demotion) is not persisted as the leader's outcome", async () => {
