@@ -205,9 +205,37 @@ export function readPersistedReconcileState(db: Database): PersistedReconcileSta
 export function reconcileView(args: {
   isFollower: boolean;
   db: Database | undefined;
+  vaults: readonly { id: string }[];
   self: PersistedReconcileState;
 }): ReconcileView {
   if (!args.isFollower) return { ...args.self, source: "self" };
   const persisted = args.db ? readPersistedReconcileState(args.db) : undefined;
-  return { ...(persisted ?? PENDING), source: "leader" };
+  const state = persisted ?? PENDING;
+  return {
+    ...state,
+    reconcileErrors: state.reconcileErrors.filter((e) => args.vaults.some((v) => v.id === e.vault)),
+    source: "leader",
+  };
+}
+
+export function metadataNotesReady(
+  db: Database,
+  role: { isLeader: () => boolean },
+  health: { notesReady: boolean },
+): () => boolean {
+  let ready = false;
+  return () => {
+    if (role.isLeader()) return health.notesReady;
+    if (health.notesReady || ready) return true;
+    try {
+      if (!reconcileTableExists(db)) return false;
+      const row = cachedPrepare(db, "SELECT notes_ready FROM reconcile_state WHERE id = 1").get() as
+        | { notes_ready: number }
+        | undefined;
+      ready = row?.notes_ready === 1;
+    } catch {
+      return false;
+    }
+    return ready;
+  };
 }
