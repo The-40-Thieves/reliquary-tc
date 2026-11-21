@@ -1,12 +1,19 @@
 // Every cache.db table is one of: vault-scoped (has vault_id), join-scoped (a foreign key to a
 // vault-scoped parent), or global with a reason. UNRESOLVED holds tables nobody has decided yet.
+// The schema is the migrations plus the tables the server creates at runtime.
 import { describe, expect, it } from "vitest";
 import { provisionCacheDb } from "../src/db/provision";
+import { Scheduler } from "../src/scheduler/scheduler";
+import { ensureChunkColbert } from "../src/search/chunk_colbert";
+import { ensureChunkSparse } from "../src/search/sparse";
+import { invalidateVecIndex } from "../src/search/vec";
 import { openMemoryDb } from "./helpers";
 
 const VAULT_SCOPED = [
   "acl_path_sets",
   "capture_queue",
+  "chunk_colbert",
+  "chunk_sparse",
   "chunks",
   "cluster_summaries",
   "cluster_summary_members",
@@ -40,8 +47,10 @@ const JOIN_SCOPED: Record<string, { parent: string; via: string[] }> = {
 const GLOBAL: Record<string, string> = {
   index_leader_epoch: "Cache-wide indexing leader fencing counter.",
   job_runs: "Cache-wide scheduler job history.",
+  job_schedule: "Cache-wide scheduler state, one row per job.",
   schema_migrations: "Migration versions and checksums for the database.",
   telemetry_state: "Server installation telemetry state.",
+  vec_index_fingerprint: "One row: the embedding setup the shared vector index was built with.",
   wiki_judge_usage: "Cache-wide daily judge call budget.",
 };
 const UNRESOLVED: Record<string, string> = {
@@ -61,10 +70,18 @@ function describeTable(db: ReturnType<typeof openMemoryDb>, name: string): Table
     .all() as Table["foreignKeys"];
   return { columns: columns.map((column) => column.name), foreignKeys };
 }
+/** Tables no migration creates: each is made on first use by the code that owns it. */
+function createRuntimeTables(db: ReturnType<typeof openMemoryDb>): void {
+  new Scheduler({ db });
+  expect(ensureChunkColbert(db)).toBe(true);
+  expect(ensureChunkSparse(db)).toBe(true);
+  invalidateVecIndex(db);
+}
 function schemaTables(): Map<string, Table> {
   const db = openMemoryDb();
   try {
     provisionCacheDb(db);
+    createRuntimeTables(db);
     const tables = db.prepare("PRAGMA table_list").all() as Array<{ name: string; type: string }>;
     const definitions = db
       .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table'")
@@ -98,8 +115,8 @@ describe("cache table vault scope", () => {
   ];
   const columnsOf = (name: string) => tables.get(name)?.columns ?? [];
 
-  it("classifies every migrated table exactly once", () => {
-    expect(tables.size).toBeGreaterThanOrEqual(37);
+  it("classifies every table exactly once", () => {
+    expect(tables.size).toBeGreaterThanOrEqual(41);
     for (const name of tables.keys()) {
       expect(
         classified.filter((entry) => entry === name),
