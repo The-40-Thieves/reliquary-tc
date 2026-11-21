@@ -1,6 +1,8 @@
 // Every cache.db table is one of: vault-scoped (has vault_id), join-scoped (a foreign key to a
 // vault-scoped parent), or global with a reason. UNRESOLVED holds tables nobody has decided yet.
 // The schema is the migrations plus the tables the server creates at runtime.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { provisionCacheDb } from "../src/db/provision";
 import { Scheduler } from "../src/scheduler/scheduler";
@@ -154,6 +156,18 @@ describe("cache table vault scope", () => {
       );
       expect(reason.trim(), `${name} needs a reason`).not.toBe("");
     }
+  });
+
+  // Virtual tables are skipped above, and vec_chunks exists only where the sqlite-vec extension
+  // loads, so its vault column is checked in the statement that creates it.
+  it("the shared vector index is partitioned by vault", () => {
+    const vec = readFileSync(
+      fileURLToPath(new URL("../src/search/vec.ts", import.meta.url)),
+      "utf8",
+    );
+    const ddl = vec.match(/CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0\(([^)]*)\)/);
+    expect(ddl, "the vec_chunks CREATE statement is in search/vec.ts").not.toBeNull();
+    expect(ddl?.[1]).toMatch(/\bvault_id TEXT partition key\b/);
   });
 
   it("the undecided list does not grow", () => {
