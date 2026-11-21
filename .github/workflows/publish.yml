@@ -376,6 +376,8 @@ jobs:
       # platform sub-packages died with `402 Payment Required` (must sign up for private packages).
       # Force every generated platform package public before napi publishes them: napi runs
       # `npm publish` per npm/<triple> dir and honors each dir's publishConfig.access.
+      # The same patch asks for provenance. `--provenance` on the umbrella publish below never
+      # reaches these packages, so they shipped without an attestation.
       - name: make platform sub-packages public (npm 402 fix)
         if: steps.preflight.outputs.already_published != 'true'
         working-directory: packages/native
@@ -383,13 +385,15 @@ jobs:
         run: |
           set -euo pipefail
           for f in npm/*/package.json; do
-            node -e 'const fs=require("fs");const f=process.argv[1];const p=JSON.parse(fs.readFileSync(f,"utf8"));p.publishConfig=Object.assign({},p.publishConfig,{access:"public"});fs.writeFileSync(f,JSON.stringify(p,null,2)+"\n");' "$f"
-            echo "publishConfig.access=public -> $f"
+            node -e 'const fs=require("fs");const f=process.argv[1];const p=JSON.parse(fs.readFileSync(f,"utf8"));p.publishConfig=Object.assign({},p.publishConfig,{access:"public",provenance:true});fs.writeFileSync(f,JSON.stringify(p,null,2)+"\n");' "$f"
+            echo "publishConfig.access=public, provenance=true -> $f"
           done
       # Platform sub-packages (one per built triple, @the-40-thieves/reliquary-tc-native-<triple>)
       # + the umbrella optionalDependencies are generated and published by `napi pre-publish`.
       - name: publish platform sub-packages (napi)
         if: steps.preflight.outputs.already_published != 'true'
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
         working-directory: packages/native
         run: ./node_modules/.bin/napi pre-publish -t npm --no-gh-release
       # publish straight to the release dist-tag, in dependency order, with the
