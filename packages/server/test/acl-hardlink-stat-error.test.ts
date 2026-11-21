@@ -49,6 +49,11 @@ describe("isHardLinkedFile when the stat fails", () => {
     expect(isHardLinkedFile("/vault/a.md", missing)).toBe(true);
   });
 
+  // `null <= 1` and `"0" <= 1` are both true in JavaScript, so the type is checked first.
+  it.each([null, "0", "1"])("refuses a link count of %j, which only coerces to a number", (n) => {
+    expect(isHardLinkedFile("/vault/a.md", fileWith(n as unknown as number))).toBe(true);
+  });
+
   // Some filesystems report a count of 0 for an ordinary file; that is not an alias.
   it("allows a regular file whose link count reads as 0", () => {
     expect(isHardLinkedFile("/vault/a.md", fileWith(0))).toBe(false);
