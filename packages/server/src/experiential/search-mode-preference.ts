@@ -21,13 +21,8 @@
 // CONFIDENCE. `preference_profile.weight` is a counter in [0, 5]: the first observation sets 1.0,
 // each further agreeing one adds 0.5, a disagreeing judged window subtracts 0.5. It is NOT a
 // per-value tally (one row holds one value, and an `add` for a different tool overwrites the value
-// while the weight keeps climbing), and it is NOT a count of distinct windows either:
-// `extractPreferences` re-reads the newest judged windows on every run and re-applies them, so one
-// unchanged window reaches 3.0 after five `reliquary-tc reflect` runs (measured, see the PR that
-// added this reader). The weight therefore measures "evidence observed across extraction passes".
-// `SEARCH_MODE_MIN_WEIGHT` of 3.0 is a floor against a single fresh observation steering a caller,
-// not a statistical confidence. Making extraction idempotent (a per-window watermark) is what
-// would turn this into a real count, and is why extraction is deliberately not scheduled.
+// while the weight keeps climbing). Extraction applies each evidence window once. The minimum
+// weight is a floor against a single observation steering a caller, not statistical confidence.
 //
 // SCOPE. `preferred.search_mode` is declared "caller"-scoped (PREFERENCE_KEYS): it encodes the
 // OBSERVING AGENT's own workload and must not steer another principal's retrieval. `preferenceProfile`

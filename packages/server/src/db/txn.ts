@@ -212,6 +212,7 @@ export type WriteTxnLabel =
   // they are one transaction by requirement: a crash between them would leave a session's episodes
   // condemned but still promoted, which is exactly the hold-rule bypass the demotion exists to
   // close.
+  | "preference_deltas"
   | "task_verdict"
   // The write-provenance append: read the vault's chain head, insert the next signed row, move the
   // head. One transaction so two writers (server + CLI) cannot fork the chain.

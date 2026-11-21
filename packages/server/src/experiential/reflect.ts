@@ -16,6 +16,7 @@
 //     (no writer sets task_result = -1 on the live store) but stays wired for when one exists —
 //     see the design note for the correction history.
 import { tableExists } from "../db/introspect";
+import { inWriteTransaction } from "../db/txn";
 import type { Database } from "../db/types";
 import { serializeEpisodeSummary, type ToolTally } from "./summarize-episode";
 
@@ -283,6 +284,7 @@ export interface PreferenceDelta {
    *  optional so a producer cannot forget it and fall through to an implicit `''`, which is exactly
    *  the silent-bleed-back-to-shared failure mode this ticket exists to close. */
   scopeCaller: string;
+  evidenceKey?: string;
 }
 
 const WEIGHT_CAP = 5;
@@ -319,6 +321,17 @@ export function applyPreferenceDeltas(
   nowMs: number,
 ): { version: number; applied: number } {
   if (!tableReady(edb)) throw new Error("preference_profile tables missing (run migrations)");
+  return inWriteTransaction(edb, "preference_deltas", () =>
+    applyPreferenceBatch(edb, vaultId, deltas, nowMs),
+  );
+}
+
+function applyPreferenceBatch(
+  edb: Database,
+  vaultId: string,
+  deltas: PreferenceDelta[],
+  nowMs: number,
+): { version: number; applied: number } {
   // Version is PER-VAULT (not per scope_caller): one batch can legitimately mix deltas for several
   // partitions (an extraction pass over several windows with different callers), and it is still
   // ONE batch — splitting the version counter by scope_caller too would make an operator's "what
@@ -329,6 +342,15 @@ export function applyPreferenceDeltas(
     )
     .get(vaultId, vaultId) as { v: number | null };
   const version = (prev.v ?? 0) + 1;
+  const statements = preferenceStatements(edb);
+  let applied = 0;
+  for (const d of deltas) {
+    if (applyPreferenceDelta(statements, vaultId, d, nowMs, version)) applied++;
+  }
+  return { version, applied };
+}
+
+function preferenceStatements(edb: Database) {
   const logDelta = edb.prepare(
     "INSERT INTO preference_deltas (vault_id, scope_caller, ts, key, op, value, evidence, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   );
@@ -349,45 +371,44 @@ export function applyPreferenceDeltas(
   const retract = edb.prepare(
     "UPDATE preference_profile SET weight = 0, version = ?, updated_at = ? WHERE vault_id = ? AND scope_caller = ? AND key = ?",
   );
-  let applied = 0;
-  for (const d of deltas) {
-    if (!d.key) continue;
-    // strengthen/weaken/retract are UPDATE ... WHERE vault_id = ? AND scope_caller = ? AND key = ?
-    // — on a key that was never added IN THIS PARTITION they change 0 rows. Gate the audit row +
-    // `applied` on an actual mutation so a judge proposing a delta for a non-existent key can't log
-    // a phantom preference_deltas row or bump the version.
-    let changed = 1;
-    if (d.op === "add")
-      upsertAdd.run(
-        vaultId,
-        d.scopeCaller,
-        d.key,
-        d.value ?? "",
-        version,
-        nowMs,
-        d.evidence ?? null,
-      );
-    else if (d.op === "strengthen")
-      changed = bump.run(version, nowMs, vaultId, d.scopeCaller, d.key).changes;
-    else if (d.op === "weaken")
-      changed = damp.run(version, nowMs, vaultId, d.scopeCaller, d.key).changes;
-    else if (d.op === "retract")
-      changed = retract.run(version, nowMs, vaultId, d.scopeCaller, d.key).changes;
-    else continue;
-    if (changed === 0) continue;
-    logDelta.run(
-      vaultId,
-      d.scopeCaller,
-      nowMs,
-      d.key,
-      d.op,
-      d.value ?? null,
-      d.evidence ?? null,
-      version,
-    );
-    applied++;
-  }
-  return { version, applied };
+  const seen = edb.prepare(
+    "SELECT 1 FROM preference_deltas WHERE vault_id = ? AND scope_caller = ? AND key = ? AND substr(evidence, 1, length(?)) = ? LIMIT 1",
+  );
+  return { logDelta, upsertAdd, bump, damp, retract, seen };
+}
+
+function applyPreferenceDelta(
+  statements: ReturnType<typeof preferenceStatements>,
+  vaultId: string,
+  d: PreferenceDelta,
+  nowMs: number,
+  version: number,
+): boolean {
+  const { logDelta, upsertAdd, bump, damp, retract, seen } = statements;
+  const prefix = d.evidenceKey === undefined ? undefined : `${d.evidenceKey}\n`;
+  if (!d.key || (prefix && seen.get(vaultId, d.scopeCaller, d.key, prefix, prefix))) return false;
+  let changed = 1;
+  if (d.op === "add")
+    upsertAdd.run(vaultId, d.scopeCaller, d.key, d.value ?? "", version, nowMs, d.evidence ?? null);
+  else if (d.op === "strengthen")
+    changed = bump.run(version, nowMs, vaultId, d.scopeCaller, d.key).changes;
+  else if (d.op === "weaken")
+    changed = damp.run(version, nowMs, vaultId, d.scopeCaller, d.key).changes;
+  else if (d.op === "retract")
+    changed = retract.run(version, nowMs, vaultId, d.scopeCaller, d.key).changes;
+  else return false;
+  if (changed === 0) return false;
+  logDelta.run(
+    vaultId,
+    d.scopeCaller,
+    nowMs,
+    d.key,
+    d.op,
+    d.value ?? null,
+    prefix ? `${prefix}${d.evidence ?? ""}` : (d.evidence ?? null),
+    version,
+  );
+  return true;
 }
 
 /** THE-891: raised when a read tries to cross the caller partition (`opts.anyCaller`) without
@@ -544,8 +565,8 @@ export function groupEpisodesByVerdictWindow<T extends VerdictWindowable>(
   for (const e of episodes) {
     const key =
       e.verdict_at !== null && e.session_id !== null
-        ? `${e.session_id}:${e.verdict_at}`
-        : `row:${windows.size}`;
+        ? JSON.stringify(["window", e.session_id, e.verdict_at])
+        : JSON.stringify(["row", windows.size]);
     const bucket = windows.get(key);
     if (bucket) bucket.push(e);
     else windows.set(key, [e]);
@@ -554,6 +575,7 @@ export function groupEpisodesByVerdictWindow<T extends VerdictWindowable>(
 }
 
 interface EvidenceRow extends VerdictWindowable {
+  id: string;
   tool: string | null;
   status: string;
   task_result: number;
@@ -599,6 +621,11 @@ function buildSearchModeDeltas(windows: Array<{ episodes: EvidenceRow[] }>): Pre
       key: "preferred.search_mode",
       op: taskResult > 0 ? "add" : "weaken",
       value: majorityTool,
+      evidenceKey: JSON.stringify(
+        w.episodes[0]?.session_id != null && w.episodes[0]?.verdict_at != null
+          ? ["episode", w.episodes[0].session_id, w.episodes[0].verdict_at]
+          : ["episode-row", w.episodes[0]?.id],
+      ),
       evidence: `tool=${majorityTool} sampled_calls=${w.episodes.length} tool_calls=${majorityCount}`,
       scopeCaller: scopeCallerFor("preferred.search_mode", w.episodes[0]?.caller ?? null),
     });
@@ -613,6 +640,7 @@ function buildSearchModeDeltas(windows: Array<{ episodes: EvidenceRow[] }>): Pre
  *  (THE-568/P1.7) is the window's principal — THE-891 feeds it to `scopeCallerFor` the same way
  *  `EvidenceRow.caller` does for the episode side. */
 export interface CitationEvidenceRow {
+  id?: string;
   chunk_id: string;
   surface_type: string | null;
   event_group: string | null;
@@ -645,7 +673,7 @@ function citationEvidence(
   if (!tableExists(edb, "chunk_retrievals")) return [];
   const rows = edb
     .prepare(
-      `SELECT chunk_id, surface_type, event_group, citation_state, caller FROM chunk_retrievals
+      `SELECT id, chunk_id, surface_type, event_group, citation_state, caller FROM chunk_retrievals
        WHERE citation_state IS NOT NULL
        ORDER BY retrieved_at DESC LIMIT ?`,
     )
@@ -712,6 +740,11 @@ function buildCitationSearchModeDeltas(
       key: "preferred.search_mode",
       op: confirmed > 0 ? "add" : "weaken",
       value: tool,
+      evidenceKey: JSON.stringify(
+        w.rows[0]?.event_group != null
+          ? ["citation", w.rows[0].event_group]
+          : ["citation-row", w.rows[0]?.id],
+      ),
       evidence: `citation tool=${tool} confirmed=${confirmed} rejected=${rejected}`,
       // THE-891: same registry lookup buildSearchModeDeltas uses, against this window's caller.
       scopeCaller: scopeCallerFor("preferred.search_mode", w.rows[0]?.caller ?? null),
@@ -754,7 +787,7 @@ export async function extractPreferences(
   // scopeCallerFor so a caller-scoped delta lands in the dispatching agent's own partition.
   const episodes = edb
     .prepare(
-      `SELECT tool, status, task_result, summary, session_id, verdict_at, caller FROM agent_episodes
+      `SELECT id, tool, status, task_result, summary, session_id, verdict_at, caller FROM agent_episodes
        WHERE vault_id = ? AND vault_id IS NOT NULL
          AND blocked = 0 AND eligibility = 'eligible' AND task_result IS NOT NULL
        ORDER BY ts DESC LIMIT ?`,
