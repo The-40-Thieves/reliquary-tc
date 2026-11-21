@@ -8,10 +8,10 @@
 // A metadata-only write: no parsing, no embedding. The vault generation moves when anything changed,
 // because the permitted-path sets and the query cache are keyed on it and both are derived from
 // these identities.
-import { statSync } from "node:fs";
 import { inWriteTransaction, type WriteTxnHooks } from "../../db/txn";
 import type { Database } from "../../db/types";
 import type { AclPath } from "../../vault/acl-identity";
+import { isHardLinkedFile } from "../../vault/acl-path";
 import { resolveVaultPathChecked } from "../../vault/paths";
 import {
   ACL_PATH_TABLES,
@@ -79,17 +79,6 @@ function storedIdentityDiffers(
     if (rows.some((r) => (r.acl_path ?? ACL_PATH_UNRESOLVED) !== id)) return true;
   }
   return false;
-}
-
-/** Is `abs` a regular file with a second directory entry (st_nlink > 1)? read_note refuses one, since
- *  realpath cannot see through a hard link (`allowed/x.md` may be `private/y.md`). Not statable: no. */
-export function isHardLinkedFile(abs: string): boolean {
-  try {
-    const st = statSync(abs);
-    return st.isFile() && st.nlink > 1;
-  } catch {
-    return false;
-  }
 }
 
 /** The ACL identity of a path an index-on-write caller names (vault/paths.ts resolveVaultPathChecked):

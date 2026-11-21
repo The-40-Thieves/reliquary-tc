@@ -17,8 +17,12 @@ import { explainVisibility } from "../../mcp/visibility";
 import { deriveRrfK, resolveRetrievalDefaults } from "../../search/retrieval-defaults";
 import { readVaultIndexStats } from "../../search/vault-index-stats";
 import { ResponseFormatInput, resolveResponseFormat } from "../../util/response-format";
-import { evaluatePathAcl, pathScopesSatisfied } from "../../vault/acl-path";
-import { normalizeVaultPath, resolveVaultPathChecked } from "../../vault/paths";
+import { evaluatePathAcl, isHardLinkedFile, pathScopesSatisfied } from "../../vault/acl-path";
+import {
+  assertWritableVaultPath,
+  normalizeVaultPath,
+  resolveVaultPathChecked,
+} from "../../vault/paths";
 import { intersectReplayScopes } from "../../workspace/rerun";
 import { getSession } from "../../workspace/sessions";
 import { defineTool } from "../m1/define";
@@ -153,6 +157,8 @@ const InspectAclOutput = z.object({
       "schema_file",
       "scope",
       "path_scope",
+      "hard_link",
+      "invalid_write_path",
     ])
     .optional(),
   kill_switch: z.boolean(),
@@ -354,7 +360,8 @@ export function buildAdminTools(deps: M6Deps): ToolDefinition[] {
       handler: (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault); // vault_not_found if unknown
         // Judged on the symlink-resolved path, as enforcePathAcl judges it.
-        const rel = resolveVaultPathChecked(v.root, normalizeVaultPath(input.path)).aclRel;
+        const resolved = resolveVaultPathChecked(v.root, normalizeVaultPath(input.path));
+        const rel = resolved.aclRel;
         const acl = ctx.acl;
         const effective_scopes = acl?.scopesForPath(rel) ?? [];
 
@@ -372,6 +379,32 @@ export function buildAdminTools(deps: M6Deps): ToolDefinition[] {
         // 1 + 2. read-only kill switch AND per-op path whitelist, via the SAME pure
         //        evaluator enforcePathAcl delegates to (no reimplementation). execute
         //        is not path-scoped, so only the scope grant below applies.
+        if (input.op === "write") {
+          try {
+            assertWritableVaultPath(v.root, input.path);
+          } catch {
+            return {
+              allowed: false,
+              denied_by: "invalid_write_path",
+              kill_switch: false,
+              matched_rule: null,
+              effective_scopes,
+            };
+          }
+        }
+        if (
+          input.op !== "read" &&
+          input.op !== "execute" &&
+          acl?.immutableGlobFor(normalizeVaultPath(input.path)) != null
+        )
+          return {
+            allowed: false,
+            denied_by: `${input.op}_paths`,
+            kill_switch: false,
+            matched_rule: acl.immutableGlobFor(normalizeVaultPath(input.path)),
+            effective_scopes,
+          };
+
         let matchedRule: string | null = null;
         if (input.op !== "execute") {
           const decision = evaluatePathAcl(
@@ -418,6 +451,19 @@ export function buildAdminTools(deps: M6Deps): ToolDefinition[] {
             denied_by: "path_scope",
             kill_switch: false,
             matched_rule: matchedRule,
+            effective_scopes,
+          };
+
+        if (
+          input.op !== "execute" &&
+          (acl || input.op === "read") &&
+          isHardLinkedFile(resolved.abs)
+        )
+          return {
+            allowed: false,
+            denied_by: "hard_link",
+            matched_rule: matchedRule,
+            kill_switch: false,
             effective_scopes,
           };
 

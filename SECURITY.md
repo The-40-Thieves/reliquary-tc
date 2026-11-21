@@ -316,6 +316,8 @@ A caller-named template is copied into the output, so it needs `read:notes` as w
 
 Known residuals, accepted for now:
 
+- `index_vault` reports `notes_seen` as the unfiltered number of notes walked. The tool requires the `admin:vault` scope.
+
 - Size and count fields: `bytes_written`, `appended_bytes`, lines and bytes removed, row counts and redaction
   counts.
 - `open_workspace` answers differently for a workspace name that exists and one that does not.
