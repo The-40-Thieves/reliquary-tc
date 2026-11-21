@@ -316,6 +316,7 @@ A caller-named template is copied into the output, so it needs `read:notes` as w
 
 Known residuals, accepted for now:
 
+- `index_vault` reports `notes_seen` as the unfiltered number of notes walked. The tool requires the `admin:vault` scope.
 - Append acknowledgements omit the whole-note byte count for non-readers. Content-dependent patch, tag,
   frontmatter and table writes require read access; append scans only the non-reader's input. Other
   size and count fields across mutating tools have not received a comprehensive behavioral audit.

@@ -1,4 +1,4 @@
-import { type Stats, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { err, grantsAll } from "@the-40-thieves/reliquary-tc-shared";
 // Per-path ACL enforcement — activates the dormant M0 FolderAcl seam.
 // Every path-based tool calls this with the operation kind and the resolved
@@ -155,6 +155,15 @@ export function pathScopesSatisfied(
   return required.length === 0 || grantsAll(grantedScopes, required);
 }
 
+export function isHardLinkedFile(abs: string): boolean {
+  try {
+    const st = statSync(abs);
+    return st.isFile() && st.nlink > 1;
+  } catch {
+    return false;
+  }
+}
+
 export function enforcePathAcl(
   acl: FolderAcl | undefined,
   op: AclOp,
@@ -233,19 +242,11 @@ export function enforcePathAcl(
   // hard link, so an aliased target outside the allowed set would otherwise pass the glob check.
   // The fd-based readers (notes-io) reject nlink>1 on read; this additionally covers delete/move,
   // which do not read through readNote. Fail closed; a not-yet-created write path has no stat.
-  if (acl) {
-    let st: Stats | null = null;
-    try {
-      st = statSync(resolved.abs);
-    } catch {
-      st = null;
-    }
-    if (st?.isFile() && st.nlink > 1)
-      throw err.aclDenied("refusing a hard-linked file (inode aliasing)", {
-        path: redactedPath,
-        op,
-      });
-  }
+  if (acl && isHardLinkedFile(resolved.abs))
+    throw err.aclDenied("refusing a hard-linked file (inode aliasing)", {
+      path: redactedPath,
+      op,
+    });
 }
 
 /**
@@ -288,6 +289,18 @@ export function defaultDeniedUnderEitherName(root: string, rel: string): boolean
   return (
     isDefaultDenied(normalizeVaultPath(rel)) ||
     isDefaultDenied(resolveVaultPathChecked(root, rel).aclRel)
+  );
+}
+
+export function immutableGlobUnderEitherName(
+  acl: FolderAcl | undefined,
+  root: string,
+  rel: string,
+): string | null {
+  if (!acl) return null;
+  return (
+    acl.immutableGlobFor(normalizeVaultPath(rel)) ??
+    acl.immutableGlobFor(resolveVaultPathChecked(root, rel).aclRel)
   );
 }
 

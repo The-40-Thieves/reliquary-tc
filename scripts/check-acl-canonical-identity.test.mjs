@@ -338,6 +338,12 @@ const GREEN = {
       return isDefaultDenied(normalizeVaultPath(rel)) || isDefaultDenied(resolveVaultPathChecked(root, rel).aclRel);
     }
     ${NORMALIZE}`,
+  "handler input judged via immutableGlobUnderEitherName": `
+    export const tool = { handler: (input, ctx) => immutableGlobUnderEitherName(ctx.acl, ctx.root, input.path) };
+    export function immutableGlobUnderEitherName(acl, root, rel) {
+      return acl.immutableGlobFor(normalizeVaultPath(rel)) ?? acl.immutableGlobFor(resolveVaultPathChecked(root, rel).aclRel);
+    }
+    ${NORMALIZE}`,
   "a clean value through a normalizer stays clean": `
     export const f = (acl, cfg, scopes) => readableRel(acl, normalizeVaultPath(cfg.name), scopes);
     ${NORMALIZE}`,
@@ -508,6 +514,7 @@ test("the sink and canonical-entrypoint tables hold the deciders this gate is bu
     "readableStoredRow",
     "storedAclPathOf",
     "defaultDeniedUnderEitherName",
+    "immutableGlobUnderEitherName",
   ])
     assert.ok(CANONICAL_ENTRYPOINTS.has(s), s);
   // A sink must never also be an exempt entrypoint, or the exemption would blind the sink.

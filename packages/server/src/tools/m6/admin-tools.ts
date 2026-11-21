@@ -17,8 +17,17 @@ import { explainVisibility } from "../../mcp/visibility";
 import { deriveRrfK, resolveRetrievalDefaults } from "../../search/retrieval-defaults";
 import { readVaultIndexStats } from "../../search/vault-index-stats";
 import { ResponseFormatInput, resolveResponseFormat } from "../../util/response-format";
-import { evaluatePathAcl, pathScopesSatisfied } from "../../vault/acl-path";
-import { normalizeVaultPath, resolveVaultPathChecked } from "../../vault/paths";
+import {
+  evaluatePathAcl,
+  immutableGlobUnderEitherName,
+  isHardLinkedFile,
+  pathScopesSatisfied,
+} from "../../vault/acl-path";
+import {
+  assertWritableVaultPath,
+  normalizeVaultPath,
+  resolveVaultPathChecked,
+} from "../../vault/paths";
 import { intersectReplayScopes } from "../../workspace/rerun";
 import { getSession } from "../../workspace/sessions";
 import { defineTool } from "../m1/define";
@@ -138,7 +147,7 @@ function scopeFamilyGranted(scopes: string[], op: string): boolean {
   });
 }
 
-/** inspect_acl: five early returns that TypeScript widens to one shape (same pattern as m7/m8's
+/** inspect_acl: seven early returns that TypeScript widens to one shape (same pattern as m7/m8's
  *  multi-arm tools) — `denied_by` is the only field that is ever absent (the success arm). `${op}
  *  _paths` only ever fires for read/write/delete: execute is not path-scoped, so its only denial
  *  path is the read_only kill switch checked before evaluatePathAcl runs. */
@@ -153,6 +162,8 @@ const InspectAclOutput = z.object({
       "schema_file",
       "scope",
       "path_scope",
+      "hard_link",
+      "invalid_write_path",
     ])
     .optional(),
   kill_switch: z.boolean(),
@@ -354,7 +365,8 @@ export function buildAdminTools(deps: M6Deps): ToolDefinition[] {
       handler: (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault); // vault_not_found if unknown
         // Judged on the symlink-resolved path, as enforcePathAcl judges it.
-        const rel = resolveVaultPathChecked(v.root, normalizeVaultPath(input.path)).aclRel;
+        const resolved = resolveVaultPathChecked(v.root, normalizeVaultPath(input.path));
+        const rel = resolved.aclRel;
         const acl = ctx.acl;
         const effective_scopes = acl?.scopesForPath(rel) ?? [];
 
@@ -372,6 +384,34 @@ export function buildAdminTools(deps: M6Deps): ToolDefinition[] {
         // 1 + 2. read-only kill switch AND per-op path whitelist, via the SAME pure
         //        evaluator enforcePathAcl delegates to (no reimplementation). execute
         //        is not path-scoped, so only the scope grant below applies.
+        // A read-only vault refuses a write before its name is looked at, so the kill switch
+        // (reported by the evaluator below) wins over an invalid name.
+        if (input.op === "write" && !acl?.readOnly) {
+          try {
+            assertWritableVaultPath(v.root, input.path);
+          } catch {
+            return {
+              allowed: false,
+              denied_by: "invalid_write_path",
+              kill_switch: false,
+              matched_rule: null,
+              effective_scopes,
+            };
+          }
+        }
+        const immutableGlob =
+          input.op === "read" || input.op === "execute"
+            ? null
+            : immutableGlobUnderEitherName(acl, v.root, input.path);
+        if (immutableGlob !== null)
+          return {
+            allowed: false,
+            denied_by: `${input.op}_paths`,
+            kill_switch: false,
+            matched_rule: immutableGlob,
+            effective_scopes,
+          };
+
         let matchedRule: string | null = null;
         if (input.op !== "execute") {
           const decision = evaluatePathAcl(
@@ -418,6 +458,19 @@ export function buildAdminTools(deps: M6Deps): ToolDefinition[] {
             denied_by: "path_scope",
             kill_switch: false,
             matched_rule: matchedRule,
+            effective_scopes,
+          };
+
+        if (
+          input.op !== "execute" &&
+          (acl || input.op === "read") &&
+          isHardLinkedFile(resolved.abs)
+        )
+          return {
+            allowed: false,
+            denied_by: "hard_link",
+            matched_rule: matchedRule,
+            kill_switch: false,
             effective_scopes,
           };
 
