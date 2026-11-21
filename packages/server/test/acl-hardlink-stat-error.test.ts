@@ -3,7 +3,7 @@
 // hard-linked" for every error, which let an unverifiable target through.
 import type { Stats } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { isHardLinkedFile } from "../src/vault/acl-path";
+import { isHardLinkedFile } from "../src/vault/hard-link";
 
 const failing = (code: string) => (): Stats => {
   throw Object.assign(new Error(code), { code });

@@ -20,9 +20,9 @@ import { ResponseFormatInput, resolveResponseFormat } from "../../util/response-
 import {
   evaluatePathAcl,
   immutableGlobUnderEitherName,
-  isHardLinkedFile,
   pathScopesSatisfied,
 } from "../../vault/acl-path";
+import { isHardLinkedFile } from "../../vault/hard-link";
 import {
   assertWritableVaultPath,
   normalizeVaultPath,
