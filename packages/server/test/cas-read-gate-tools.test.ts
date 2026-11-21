@@ -138,6 +138,30 @@ describe("bookmarks and workspaces: a non-reader gets the fixed refusal and no a
     );
     expect(r.ok).toBe(true);
   });
+
+  it.each([
+    ["an existing name", "secret-ws"],
+    ["a missing name", "no-such-ws"],
+  ])("open_workspace on %s refuses identically, with no layout", async (_label, name) => {
+    m3 = makeM3Vault({ files, acl: WRITE_ONLY_ACL });
+    const r = await m3.call("open_workspace", { vault: "test", name }, WRITER);
+    expect(errOf(r)?.message).toBe(FIXED_REFUSAL);
+    expect(JSON.stringify(r)).not.toMatch(/4821|layout|active|content_hash|not found/);
+  });
+
+  it("a refused open_workspace leaves the active workspace unchanged", async () => {
+    const two = JSON.stringify({ active: "a", workspaces: { a: {}, b: {} } });
+    m3 = makeM3Vault({ files: { ".obsidian/workspaces.json": two }, acl: WRITE_ONLY_ACL });
+    await m3.call("open_workspace", { vault: "test", name: "b" }, WRITER);
+    expect(m3.read(".obsidian/workspaces.json")).toBe(two);
+  });
+
+  it("a reader still opens a workspace and gets its layout", async () => {
+    m3 = makeM3Vault({ files, acl: READER_ACL });
+    const r = await m3.call("open_workspace", { vault: "test", name: "secret-ws" }, READER);
+    expect(r.ok).toBe(true);
+    expect(JSON.stringify(r)).toContain("4821");
+  });
 });
 
 describe("append_to_periodic_note with a heading: a non-reader is refused identically", () => {
