@@ -29,9 +29,10 @@ export interface BulkReport {
   duration_ms: number;
 }
 
-function toErrorJson(e: unknown): ErrorJSON {
+/** An untyped throw keeps the `internal_error` code but never its raw message, which can carry a host path. */
+export function bulkItemError(e: unknown): ErrorJSON {
   return (
-    e instanceof ReliquaryTcError ? e : new ReliquaryTcError("internal_error", (e as Error).message)
+    e instanceof ReliquaryTcError ? e : new ReliquaryTcError("internal_error", "internal error")
   ).toJSON();
 }
 
@@ -91,7 +92,7 @@ export async function runBulk<T>(
           e instanceof ReliquaryTcError && e.code === "secret_detected"
             ? redactIdentityFields(idFields)
             : idFields;
-        results[i] = { ...safeIdFields, ok: false, error: toErrorJson(e) };
+        results[i] = { ...safeIdFields, ok: false, error: bulkItemError(e) };
         if (opts.stopOnFirstError) stop = true;
       }
     }
