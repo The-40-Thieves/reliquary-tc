@@ -108,6 +108,7 @@ export interface TokenVerifierOptions {
    *  `audience` (which an operator may override for hand-minted tokens). Absent -> every `as`
    *  token is refused `misconfigured`. */
   resource?: string;
+  pendingRevocation?: (jti: string) => boolean;
 }
 
 /**
@@ -195,7 +196,11 @@ export function createTokenVerifier(o: TokenVerifierOptions): TokenVerifier {
               key,
               material.alg,
               { issuer: o.asIssuer, resource: o.resource, maxAgeSeconds: o.maxAgeSeconds },
-              revocation,
+              {
+                ...revocation,
+                isRevoked: (jti) =>
+                  Boolean(o.pendingRevocation?.(jti)) || Boolean(revocation.isRevoked?.(jti)),
+              },
             );
           case "mint":
             return verifyJwtWithKeySet(token, key, {

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { ServerConfig } from "@the-40-thieves/reliquary-tc-shared";
+import { cachedPrepare, type Database } from "../db/types";
 import { enabledAs } from "./as-metadata";
 import {
   jwksWithoutAudience,
@@ -30,6 +31,7 @@ export function warnJwksWithoutAudience(auth: ServerConfig["auth"]): void {
 export function buildJwtVerifier(
   auth: ServerConfig["auth"],
   registry?: AuthRegistry,
+  oauthDb?: Database,
 ): TokenVerifier | null {
   if (auth.mode !== "jwt") return null;
   const jwks =
@@ -57,6 +59,10 @@ export function buildJwtVerifier(
     audience,
     issuer: auth.issuer,
     registry,
+    pendingRevocation: oauthDb
+      ? (jti) =>
+          Boolean(cachedPrepare(oauthDb, "SELECT 1 FROM revocation_outbox WHERE jti = ?").get(jti))
+      : undefined,
     requireJti: auth.requireJti,
     // A token signed by an `as`-purpose registry key is verified only when the bundled authorization
     // server is enabled: its issuer comes from `auth.as`, the audience from `auth.resource`. With the
