@@ -6,10 +6,11 @@
 //
 // READ-ONLY, and ACL-scoped by construction: only notes the caller's read ACL admits are walked,
 // so a denied note is indistinguishable from a missing one.
+import { drainSteps, drainYielding, type ScanSteps } from "../../../util/scan-steps";
 import { buildVaultIndex, extractNoteLinks, resolveTarget } from "../../../vault/links";
 import type { ReadRefusals } from "../../read-refusals";
 import { ScanWarnings } from "../../scan-warnings";
-import { readableNotes, type ScanScope } from "../../wiki-scan";
+import { readableNotesSteps, type ScanScope } from "../../wiki-scan";
 import { isGeneratedWikiPath } from "./wiki-folder";
 
 export type EvidenceKind =
@@ -115,47 +116,57 @@ export interface IdentityScan {
   linkers: string[];
 }
 
-/**
- * Collect identity evidence for `topic` across the caller's readable notes. `folder` narrows which
- * notes may be REPORTED, not which notes are read: a link from outside the folder still counts as
- * evidence for a page inside it.
- */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing (score 82); split when next modified
-export function collectIdentityEvidence(
+interface IdentityScanOptions {
+  folder?: string | undefined;
+  isExcluded: (rel: string) => boolean;
+  /** Notes that are not pages (a vault's raw sources): readable and valid link targets, so they stay
+   *  in `notes`, but never evidence, candidates, mentions or linkers. */
+  ignore?: (rel: string) => boolean;
+  /** The caller's refusal counter, so a note refused by two walks of one call counts once. */
+  refusals: ReadRefusals;
+  signal?: AbortSignal | undefined;
+}
+
+type AddEvidence = (path: string, ev: Evidence) => void;
+type VaultIndex = ReturnType<typeof buildVaultIndex>;
+interface LinkTextTally {
+  n: number;
+  property?: string;
+  sample: string;
+}
+
+/** `add` records evidence for a reportable page; `skipped` says a note is never a page or evidence. */
+function candidateAdder(
   scope: ScanScope,
-  topicRaw: string,
-  opts: {
-    folder?: string | undefined;
-    isExcluded: (rel: string) => boolean;
-    /** Notes that are not pages (a vault's raw sources): readable and valid link targets, so they stay
-     *  in `notes`, but never evidence, candidates, mentions or linkers. */
-    ignore?: (rel: string) => boolean;
-    /** The caller's refusal counter, so a note refused by two walks of one call counts once. */
-    refusals: ReadRefusals;
-  },
-): IdentityScan {
-  const topic = cleanTopic(topicRaw);
-  const topicKey = looseKey(topic);
-  const topicQids = new Set(qidsIn(topicRaw));
-  const all = readableNotes(scope.root, scope.acl, scope.grantedScopes);
-  const index = buildVaultIndex(all);
+  opts: IdentityScanOptions,
+  candidates: Map<string, PageCandidate>,
+): { add: AddEvidence; skipped: (p: string) => boolean } {
   const folderPrefix = opts.folder ? `${opts.folder.replace(/\/+$/, "")}/` : "";
-  const inFolder = (p: string): boolean => folderPrefix === "" || p.startsWith(folderPrefix);
   const ignored = opts.ignore ?? (() => false);
-  const candidates = new Map<string, PageCandidate>();
   // The generated index.md / log.md are never a page, and never evidence for one: the index links
   // every page under its own name, which would read as every topic already having a page.
-  const generated = (p: string): boolean =>
-    isGeneratedWikiPath(p, scope.wikiFolders ?? scope.wikiFolder, scope.caseInsensitive);
-  const add = (path: string, ev: Evidence): void => {
-    if (!inFolder(path) || generated(path) || ignored(path)) return;
+  const skipped = (p: string): boolean =>
+    isGeneratedWikiPath(p, scope.wikiFolders ?? scope.wikiFolder, scope.caseInsensitive) ||
+    ignored(p);
+  const add: AddEvidence = (path, ev) => {
+    if ((folderPrefix !== "" && !path.startsWith(folderPrefix)) || skipped(path)) return;
     const c = candidates.get(path) ?? { path, evidence: [], excluded: opts.isExcluded(path) };
     // One entry per (kind, detail): a note listing the same alias twice is one piece of evidence.
     if (!c.evidence.some((e) => e.kind === ev.kind && e.detail === ev.detail)) c.evidence.push(ev);
     candidates.set(path, c);
   };
+  return { add, skipped };
+}
 
-  // Path / name: what `[[topic]]` would resolve to in Obsidian (case-insensitive path or basename).
+/** Path / name: what `[[topic]]` would resolve to in Obsidian (case-insensitive path or basename). */
+function* nameEvidenceSteps(
+  all: string[],
+  index: VaultIndex,
+  topic: string,
+  candidates: Map<string, PageCandidate>,
+  add: AddEvidence,
+): ScanSteps<void> {
+  const topicKey = looseKey(topic);
   const resolved = resolveTarget(index, topic);
   if (resolved.resolved) {
     for (const p of resolved.candidates ?? [resolved.target_path as string])
@@ -165,56 +176,99 @@ export function collectIdentityEvidence(
     const base = (p.includes("/") ? p.slice(p.lastIndexOf("/") + 1) : p).replace(/\.md$/i, "");
     if (looseKey(base) === topicKey && !candidates.get(p)?.evidence.some((e) => e.kind === "path"))
       add(p, { kind: "name_variant", detail: base });
+    yield;
   }
+}
+
+/** What a note's own frontmatter and title say about the topic, in reporting order. */
+function ownEvidence(
+  fm: Record<string, unknown> | null,
+  body: string,
+  topicKey: string,
+  topicQids: ReadonlySet<string>,
+): Evidence[] {
+  const out: Evidence[] = [];
+  for (const [key, value] of Object.entries(fm ?? {})) {
+    if (ALIAS_KEY.test(key)) {
+      // `aliases: a, b` (a comma string) is as valid as a list in Obsidian.
+      for (const raw of strings(value).flatMap((s) =>
+        typeof value === "string" ? s.split(",") : [s],
+      )) {
+        if (looseKey(raw) === topicKey && topicKey !== "")
+          out.push({ kind: "alias", detail: raw.trim() });
+      }
+    } else if (WIKIDATA_KEY.test(key) && topicQids.size > 0) {
+      for (const q of strings(value).flatMap(qidsIn))
+        if (topicQids.has(q)) out.push({ kind: "wikidata", detail: q });
+    }
+  }
+  for (const t of titlesOf(fm, body)) {
+    if (looseKey(t) === topicKey && topicKey !== "") out.push({ kind: "title", detail: t });
+  }
+  return out;
+}
+
+/** Count one note's links whose display text names the topic, per resolved target page. */
+function tallyLinkTexts(
+  links: ReturnType<typeof extractNoteLinks>,
+  rel: string,
+  index: VaultIndex,
+  topicKey: string,
+  tallies: Map<string, LinkTextTally>,
+): void {
+  for (const l of links) {
+    if (l.inCodeblock || !l.display || looseKey(l.display) !== topicKey) continue;
+    const r = resolveTarget(index, l.target);
+    if (!r.resolved || !r.target_path || r.target_path === rel) continue;
+    const slot = tallies.get(r.target_path) ?? { n: 0, sample: l.display };
+    slot.n++;
+    if (l.source === "property" && l.property !== undefined) slot.property ??= l.property;
+    tallies.set(r.target_path, slot);
+  }
+}
+
+/**
+ * Collect identity evidence for `topic` across the caller's readable notes. `folder` narrows which
+ * notes may be REPORTED, not which notes are read: a link from outside the folder still counts as
+ * evidence for a page inside it.
+ */
+function* collectIdentityEvidenceSteps(
+  scope: ScanScope,
+  topicRaw: string,
+  opts: IdentityScanOptions,
+): ScanSteps<IdentityScan> {
+  const topic = cleanTopic(topicRaw);
+  const topicKey = looseKey(topic);
+  const topicQids = new Set(qidsIn(topicRaw));
+  const all = yield* readableNotesSteps(scope.root, scope.acl, scope.grantedScopes);
+  const index = buildVaultIndex(all);
+  const candidates = new Map<string, PageCandidate>();
+  const { add, skipped } = candidateAdder(scope, opts, candidates);
+  yield* nameEvidenceSteps(all, index, topic, candidates, add);
 
   const warnings = new ScanWarnings(opts.refusals);
   // A refused note is indistinguishable from a missing one: it is never named, read or evidence.
   const refused = new Set<string>();
-  const linkTexts = new Map<string, { n: number; property?: string; sample: string }>();
+  const linkTexts = new Map<string, LinkTextTally>();
   const mentions: string[] = [];
   const linkers: string[] = [];
   for (const rel of all) {
-    if (generated(rel) || ignored(rel)) continue;
+    yield;
+    if (skipped(rel)) continue;
     const raw = warnings.refusals.read(scope.root, rel);
     if (raw === null) {
       refused.add(rel);
       continue;
     }
     const parsed = warnings.parse(raw, rel);
-    const fm = parsed.frontmatter;
-    if (fm) {
-      for (const [key, value] of Object.entries(fm)) {
-        if (ALIAS_KEY.test(key)) {
-          // `aliases: a, b` (a comma string) is as valid as a list in Obsidian.
-          for (const raw of strings(value).flatMap((s) =>
-            typeof value === "string" ? s.split(",") : [s],
-          )) {
-            if (looseKey(raw) === topicKey && topicKey !== "")
-              add(rel, { kind: "alias", detail: raw.trim() });
-          }
-        } else if (WIKIDATA_KEY.test(key) && topicQids.size > 0) {
-          for (const q of strings(value).flatMap(qidsIn))
-            if (topicQids.has(q)) add(rel, { kind: "wikidata", detail: q });
-        }
-      }
-    }
-    for (const t of titlesOf(fm, parsed.body)) {
-      if (looseKey(t) === topicKey && topicKey !== "") add(rel, { kind: "title", detail: t });
-    }
+    for (const ev of ownEvidence(parsed.frontmatter, parsed.body, topicKey, topicQids))
+      add(rel, ev);
     if (topicKey.length >= MIN_MENTION_CHARS && looseKey(parsed.body).includes(topicKey))
       mentions.push(rel);
     const links = extractNoteLinks(parsed);
     if (links.some((l) => !l.inCodeblock && looseKey(baseOf(l.target)) === topicKey))
       linkers.push(rel);
-    for (const l of links) {
-      if (l.inCodeblock || !l.display || looseKey(l.display) !== topicKey) continue;
-      const r = resolveTarget(index, l.target);
-      if (!r.resolved || !r.target_path || r.target_path === rel) continue;
-      const slot = linkTexts.get(r.target_path) ?? { n: 0, sample: l.display };
-      slot.n++;
-      if (l.source === "property" && l.property !== undefined) slot.property ??= l.property;
-      linkTexts.set(r.target_path, slot);
-    }
+    tallyLinkTexts(links, rel, index, topicKey, linkTexts);
   }
   for (const [path, s] of linkTexts) {
     if (refused.has(path)) continue;
@@ -226,4 +280,17 @@ export function collectIdentityEvidence(
   }
   for (const path of refused) candidates.delete(path);
   return { candidates, scanned: all.length, warnings, notes: all, mentions, linkers };
+}
+
+export function collectIdentityEvidence(
+  ...args: Parameters<typeof collectIdentityEvidenceSteps>
+): Promise<IdentityScan> {
+  return drainYielding(collectIdentityEvidenceSteps(...args), args[2].signal);
+}
+
+/** The final duplicate check and the writes it guards must stay in one synchronous turn. */
+export function collectIdentityEvidenceSync(
+  ...args: Parameters<typeof collectIdentityEvidenceSteps>
+): IdentityScan {
+  return drainSteps(collectIdentityEvidenceSteps(...args));
 }

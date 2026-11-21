@@ -294,7 +294,7 @@ export async function findExistingPage(
   // A raw source is an input to the wiki, not a page: it never answers "does a page exist?".
   const isRaw = rawPathFilter(v.rawFolders, v.caseInsensitive);
   const refusals = new ReadRefusals();
-  const identity = collectIdentityEvidence(
+  const identity = await collectIdentityEvidence(
     {
       root: v.root,
       acl: ctx.acl,
@@ -304,7 +304,7 @@ export async function findExistingPage(
       caseInsensitive: v.caseInsensitive,
     },
     args.topic,
-    { folder, isExcluded: exclusion.isExcluded, ignore: isRaw, refusals },
+    { folder, isExcluded: exclusion.isExcluded, ignore: isRaw, refusals, signal: ctx.signal },
   );
   const candidates = identity.candidates;
   const min = args.minSimilarity ?? TOPIC_MATCH_MIN;

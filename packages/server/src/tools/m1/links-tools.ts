@@ -20,7 +20,7 @@ import {
 import { DEFAULT_SCAN_LIMIT, nextOffsetCursor, offsetOf } from "../../util/paginate";
 import { ResponseFormatInput, resolveResponseFormat } from "../../util/response-format";
 import { capWarningsOut } from "../../util/scan-caps";
-import { drainYielding } from "../../util/scan-steps";
+import { drainSteps, drainYielding, type ScanSteps } from "../../util/scan-steps";
 import { enforcePathAcl } from "../../vault/acl-path";
 import { callerMayReadNote, checkCas, requireContentRead } from "../../vault/cas";
 import { requireConfirmation } from "../../vault/hitl";
@@ -39,7 +39,7 @@ import {
 import {
   isExternal,
   originOf,
-  readableNotes,
+  readableNotesSteps,
   scanBacklinksSteps,
   scanUnresolvedSteps,
 } from "../wiki-scan";
@@ -200,23 +200,31 @@ const RewriteInput = z
   })
   .strict();
 
+/** Refuse a path that is missing or names a folder. */
+function requireNote(abs: string, rel: string): void {
+  const ex = noteExists(abs);
+  if (!ex.exists || ex.type === "folder") throw err.noteNotFound("note not found", { path: rel });
+}
+
 /** The edits a `rewrite_link` call would make, computed the same way for the dry run, the real run
  *  and the confirmation's target fingerprint. */
-function planLinkRewrite(
+function* planLinkRewriteSteps(
   root: string,
   acl: FolderAcl | undefined,
   grantedScopes: Iterable<string>,
   input: z.infer<typeof RewriteInput>,
-): {
+): ScanSteps<{
   edits: Array<{ rel: string; text: string; count: number }>;
   totalLinks: number;
   warnings: RewriteWarning[];
-} {
+}> {
   const sub = input.folder ? normalizeVaultPath(input.folder) : undefined;
   // A note the caller may not read is neither scanned nor named, so a match in it is never reported.
   const readable = (rel: string): boolean => callerMayReadNote({ acl, grantedScopes }, root, rel);
-  const paths = readableNotes(root, acl, grantedScopes, sub).filter(readable);
-  const index = buildVaultIndex(readableNotes(root, acl, grantedScopes).filter(readable));
+  const paths = (yield* readableNotesSteps(root, acl, grantedScopes, sub)).filter(readable);
+  const index = buildVaultIndex(
+    (yield* readableNotesSteps(root, acl, grantedScopes)).filter(readable),
+  );
   const fromRes = resolveTarget(index, input.from_target);
   const fromPath = fromRes.resolved ? fromRes.target_path : null;
   const fromLiteral = normTarget(input.from_target);
@@ -224,7 +232,7 @@ function planLinkRewrite(
   const warnings: RewriteWarning[] = [];
   let totalLinks = 0;
   for (const p of paths) {
-    const raw = readNote(resolveVaultPath(root, p)).raw;
+    const { raw } = readNote(resolveVaultPath(root, p));
     const rw = rewriteLinks(raw, (target, kind) => {
       if (!input.include_embeds && kind === "embed") return null;
       const match = fromPath
@@ -237,6 +245,7 @@ function planLinkRewrite(
       edits.push({ rel: p, text: rw.text, count: rw.count });
       totalLinks += rw.count;
     }
+    yield;
   }
   return { edits, totalLinks, warnings };
 }
@@ -275,16 +284,16 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
         .strict(),
       outputSchema: GetOutgoingLinksOutput,
       requiredScopes: ["read:notes"],
-      handler: (input, ctx) => {
+      handler: async (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
         const rel = normalizeVaultPath(input.path);
         const abs = resolveVaultPath(v.root, rel);
         enforcePathAcl(ctx.acl, "read", rel, v.root, ctx.grantedScopes);
-        const ex = noteExists(abs);
-        if (!ex.exists || ex.type === "folder")
-          throw err.noteNotFound("note not found", { path: rel });
+        requireNote(abs, rel);
 
-        const index = buildVaultIndex(readableNotes(v.root, ctx.acl, ctx.grantedScopes));
+        const index = buildVaultIndex(
+          await drainYielding(readableNotesSteps(v.root, ctx.acl, ctx.grantedScopes), ctx.signal),
+        );
         const warnings = new ScanWarnings();
         const links = warnings
           .links(readNote(abs).raw, rel)
@@ -353,9 +362,7 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
         const rel = normalizeVaultPath(input.path);
         const abs = resolveVaultPath(v.root, rel);
         enforcePathAcl(ctx.acl, "read", rel, v.root, ctx.grantedScopes);
-        const ex = noteExists(abs);
-        if (!ex.exists || ex.type === "folder")
-          throw err.noteNotFound("note not found", { path: rel });
+        requireNote(abs, rel);
 
         const warnings = new ScanWarnings();
         const skip = offsetOf(input.cursor);
@@ -448,17 +455,20 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
         root
           ? (fingerprintTargets(
               root,
-              planLinkRewrite(root, ctx.acl, ctx.grantedScopes, input).edits.map((e) => e.rel),
+              drainSteps(planLinkRewriteSteps(root, ctx.acl, ctx.grantedScopes, input)).edits.map(
+                (e) => e.rel,
+              ),
             ) ?? argsHash("state", []))
           : null,
-      handler: (input, ctx) => {
+      handler: async (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
-        const { edits, totalLinks, warnings } = planLinkRewrite(
-          v.root,
-          ctx.acl,
-          ctx.grantedScopes,
-          input,
-        );
+        // Only the preview yields. A real run plans and writes in one synchronous turn: a note
+        // created or changed during a yield would leave the plan resolving links against a stale
+        // index, and no per-note hash check can see a note that did not exist when it was scanned.
+        const plan = planLinkRewriteSteps(v.root, ctx.acl, ctx.grantedScopes, input);
+        const { edits, totalLinks, warnings } = input.dry_run
+          ? await drainYielding(plan, ctx.signal)
+          : drainSteps(plan);
         const mdConfig = deps.memoryDefense?.(v.id) ?? MEMORY_DEFENSE_OFF;
 
         if (!input.dry_run) {
@@ -520,16 +530,20 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
       requiredScopes: ["write:notes"],
       // THE-824: see rewrite_link above.
       conditionallyDestructive: true,
-      handler: (input, ctx) => {
+      handler: async (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
         const rel = normalizeVaultPath(input.path);
         const abs = resolveVaultPath(v.root, rel);
         enforcePathAcl(ctx.acl, "read", rel, v.root, ctx.grantedScopes);
         requireContentRead(ctx, v.root, rel);
-        const ex = noteExists(abs);
-        if (!ex.exists || ex.type === "folder")
-          throw err.noteNotFound("note not found", { path: rel });
+        requireNote(abs, rel);
 
+        // As in rewrite_link: only the preview yields, so a real run never prunes a link whose
+        // target was created after the index was built.
+        const walk = readableNotesSteps(v.root, ctx.acl, ctx.grantedScopes);
+        const index = buildVaultIndex(
+          input.dry_run ? await drainYielding(walk, ctx.signal) : drainSteps(walk),
+        );
         const { raw, hash } = readNote(abs);
         checkCas({
           ctx,
@@ -540,7 +554,6 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
           message: "note changed since prev_hash",
         });
 
-        const index = buildVaultIndex(readableNotes(v.root, ctx.acl, ctx.grantedScopes));
         const { text, removed } = pruneHubLinks(raw, index, {
           removeUnresolved: input.remove_unresolved,
           removeDuplicates: input.remove_duplicates,
