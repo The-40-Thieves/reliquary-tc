@@ -81,7 +81,7 @@ Until this reader existed, `preferred.search_mode` had a producer (`extractPrefe
 
 **Scope follows the key's declaration.** `preferred.search_mode` is `"caller"`-scoped, so the reader takes only the row whose `scope_caller` equals the caller (`''` for the unauthenticated stdio principal) and only for the vault being searched. `preferenceProfile` returns the shared `''` partition union the caller's own, which is right for a human-scoped key; the reader filters it down to the key's declared scope so a named caller never inherits the stdio principal's row.
 
-**The threshold is a floor, not a confidence.** `SEARCH_MODE_MIN_WEIGHT` is 3.0. The weight is one counter per row, not a per-value tally. Each recorded evidence window is applied once, so repeating extraction over unchanged evidence does not increase the weight.
+**The threshold is a floor, not a confidence.** `SEARCH_MODE_MIN_WEIGHT` is 3.0. The weight is one counter per row, not a per-value tally. Each recorded evidence window is applied once, so repeating extraction over unchanged evidence does not increase the weight. Two exceptions: deltas recorded before this behaviour carry no evidence key, so the first extraction after upgrading can apply each of those windows once more; and a `weaken` or `retract` for a key with no profile row changes nothing and is not recorded, so the same window can still apply once a row exists.
 
 **Extraction stays CLI-only.** The profile is as fresh as the last `reliquary-tc reflect`; an operator who turns the flag on should run it deliberately.
 

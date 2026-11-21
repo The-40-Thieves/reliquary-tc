@@ -347,7 +347,8 @@ function applyPreferenceBatch(
   for (const d of deltas) {
     if (applyPreferenceDelta(statements, vaultId, d, nowMs, version)) applied++;
   }
-  return { version, applied };
+  // A batch that wrote nothing reports the version that exists, not one no row carries.
+  return { version: applied > 0 ? version : (prev.v ?? 0), applied };
 }
 
 function preferenceStatements(edb: Database) {

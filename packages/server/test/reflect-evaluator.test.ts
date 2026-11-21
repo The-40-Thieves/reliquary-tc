@@ -622,6 +622,14 @@ describe("preference profile (ACE typed deltas)", () => {
     // audit log has every delta
     const n = (db.prepare("SELECT COUNT(*) AS n FROM preference_deltas").get() as { n: number }).n;
     expect(n).toBe(4);
+    // A batch that writes nothing reports the version that exists, not the next one.
+    const b3 = applyPreferenceDeltas(
+      db,
+      V1,
+      [{ key: "never-added", op: "weaken", scopeCaller: "" }],
+      NOW + 20,
+    );
+    expect(b3).toEqual({ version: 2, applied: 0 });
   });
 
   it("retract zeroes the weight but keeps the row; add on an existing key strengthens", () => {
