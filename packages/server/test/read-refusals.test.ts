@@ -2,6 +2,8 @@ import { linkSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ReadRefusals } from "../src/tools/read-refusals";
+import { FolderPins, withFolderPins } from "../src/vault/folder-links";
+import { readNote } from "../src/vault/notes-io";
 import { makeTempDir, rmTemp } from "./tmp";
 
 const cleanups: Array<() => void> = [];
@@ -33,6 +35,21 @@ describe("ReadRefusals", () => {
     }
     expect((caught as NodeJS.ErrnoException).code).toBe("ENOENT");
     expect(refusals.count).toBe(0);
+  });
+
+  it("reports a missing note using its vault-relative path", () => {
+    const root = makeTempDir("obtc-read-relative-");
+    cleanups.push(() => rmTemp(root));
+    mkdirSync(join(root, "notes"));
+    const abs = join(root, "notes", "gone.md");
+    try {
+      withFolderPins(new FolderPins([{ root }]), () => readNote(abs));
+      throw new Error("expected ENOENT");
+    } catch (error) {
+      expect((error as NodeJS.ErrnoException).code).toBe("ENOENT");
+      expect((error as Error).message).toContain("notes/gone.md");
+      expect((error as Error).message).not.toContain(root);
+    }
   });
 
   it("readBounded returns null for a note over the cap without counting it", () => {

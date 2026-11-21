@@ -334,7 +334,9 @@ describe("bulk_move_notes — non-ReliquaryTcError wrapping", () => {
   it("wraps a raw throw during row validation as internal_error", async () => {
     v = makeM6Vault({ files: { "A.md": "AA" }, register });
     noteExistsThrowFor = "A.md";
-    const out = data<{ results: { from: string; ok: boolean; error?: { code: string } }[] }>(
+    const out = data<{
+      results: { from: string; ok: boolean; error?: { code: string; message: string } }[];
+    }>(
       await v.callConfirmed("bulk_move_notes", {
         vault: "test",
         dry_run: false,
@@ -343,6 +345,7 @@ describe("bulk_move_notes — non-ReliquaryTcError wrapping", () => {
     );
     expect(out.results[0]?.ok).toBe(false);
     expect(out.results[0]?.error?.code).toBe("internal_error");
+    expect(out.results[0]?.error?.message).toBe("internal error"); // never the raw throw
     expect(v.exists("A.md")).toBe(true); // never got past validation
   });
 
@@ -354,7 +357,7 @@ describe("bulk_move_notes — non-ReliquaryTcError wrapping", () => {
       results: {
         from: string;
         ok: boolean;
-        error?: { code: string };
+        error?: { code: string; message: string };
         backlinks_updated?: number;
       }[];
     }>(
@@ -371,6 +374,7 @@ describe("bulk_move_notes — non-ReliquaryTcError wrapping", () => {
     const good = out.results.find((r) => r.from === "D.md");
     expect(bad?.ok).toBe(false);
     expect(bad?.error?.code).toBe("internal_error");
+    expect(bad?.error?.message).toBe("internal error");
     expect(v.exists("A.md")).toBe(true); // the crashed row's source is left in place, not lost
     expect(v.exists("A2.md")).toBe(false);
     expect(good?.ok).toBe(true);

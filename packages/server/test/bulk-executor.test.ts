@@ -41,6 +41,9 @@ describe("runBulk — best-effort (default)", () => {
     );
     expect(report.failed).toBe(1);
     expect((report.results[0] as { error: { code: string } }).error.code).toBe("internal_error");
+    expect((report.results[0] as { error: { message: string } }).error.message).toBe(
+      "internal error",
+    );
   });
 });
 
