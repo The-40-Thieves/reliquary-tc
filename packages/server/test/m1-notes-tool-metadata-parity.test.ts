@@ -263,7 +263,7 @@ const EXPECTED: ToolSnapshot[] = [
     tags: [],
     hasPathAcl: true,
     destructive: true,
-    inputKeys: ["path", "permanent", "prev_hash", "vault"],
+    inputKeys: ["idempotency_key", "path", "permanent", "prev_hash", "vault"],
     outputKeys: ["deleted", "path", "permanent", "prev_hash", "trashed_to", "vault"],
   },
   {

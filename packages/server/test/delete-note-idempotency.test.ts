@@ -32,9 +32,17 @@ describe("delete_note with an idempotency_key", () => {
   it("the same key with different arguments is refused", async () => {
     v = makeM6Vault({ files: { "a.md": "A\n", "b.md": "B\n" }, register: () => {} });
     const key = { idempotency_key: "del-2" };
-    const first = await v.callConfirmed("delete_note", { vault: "test", path: "a.md", ...key }, CALLER);
+    const first = await v.callConfirmed(
+      "delete_note",
+      { vault: "test", path: "a.md", ...key },
+      CALLER,
+    );
     expect(first.ok, JSON.stringify(first)).toBe(true);
-    const other = await v.callConfirmed("delete_note", { vault: "test", path: "b.md", ...key }, CALLER);
+    const other = await v.callConfirmed(
+      "delete_note",
+      { vault: "test", path: "b.md", ...key },
+      CALLER,
+    );
     expect(other.ok ? null : other.error.code).toBe("idempotency_key_mismatch");
     expect(v.exists("b.md")).toBe(true);
   });

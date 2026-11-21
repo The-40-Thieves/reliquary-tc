@@ -24,6 +24,7 @@ export function createDeleteNoteTool(deps: M1Deps): ToolDefinition {
     outputSchema: DeleteNoteOutput,
     requiredScopes: ["delete:notes"],
     destructive: true,
+    acceptsIdempotencyKey: true,
     handler: (input, ctx) => {
       const v = deps.vaultRegistry.resolve(input.vault);
       const rel = normalizeVaultPath(input.path);
@@ -49,6 +50,9 @@ export function createDeleteNoteTool(deps: M1Deps): ToolDefinition {
       let trashedTo: string | null = null;
       if (input.permanent) hardDelete(abs);
       else trashedTo = trashNote(v.root, rel);
+      // The note is gone: from here a fault must not let a keyed retry delete whatever is at
+      // this path by then.
+      ctx.markEffectCommitted?.();
       deps.deindex?.(v.id, rel);
       return {
         vault: v.id,
