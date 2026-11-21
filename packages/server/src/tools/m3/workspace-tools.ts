@@ -31,6 +31,31 @@ function workspacesOf(data: WorkspacesDoc): Record<string, unknown> {
   return w && typeof w === "object" && !Array.isArray(w) ? w : {};
 }
 
+type Ctx = Parameters<typeof checkCas>[0]["ctx"];
+
+/**
+ * The shared start of both writes. Everything a write answers with (the stored layout, whether a
+ * name exists, the active name, the count) is read from the file, so the caller must be allowed
+ * to read it before it is opened.
+ */
+function readForWrite(ctx: Ctx, root: string, prevHash: string | undefined) {
+  enforcePathAcl(ctx.acl, "write", WORKSPACES_PATH, root, ctx.grantedScopes);
+  requireContentRead(ctx, root, WORKSPACES_PATH, "read:workspaces");
+  const abs = resolveVaultPath(root, WORKSPACES_PATH);
+  const file = readJsonFile<WorkspacesDoc>(abs, { workspaces: {} });
+  checkCas({
+    ctx,
+    root,
+    rel: WORKSPACES_PATH,
+    readScope: "read:workspaces",
+    prevHash,
+    currentHash: file.hash,
+    message: "workspaces.json changed since prev_hash",
+    echoCurrent: false,
+  });
+  return { abs, file };
+}
+
 // ---------------------------------------------------------------------------------------------
 // THE-417 Phase 1: declared output contracts, written from the RETURN STATEMENTS below.
 //
@@ -108,19 +133,7 @@ export function buildWorkspaceTools(deps: M3Deps): ToolDefinition[] {
       requiredScopes: ["write:workspaces"],
       handler: (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
-        enforcePathAcl(ctx.acl, "write", WORKSPACES_PATH, v.root, ctx.grantedScopes);
-        const abs = resolveVaultPath(v.root, WORKSPACES_PATH);
-        const file = readJsonFile<WorkspacesDoc>(abs, { workspaces: {} });
-        checkCas({
-          ctx,
-          root: v.root,
-          rel: WORKSPACES_PATH,
-          readScope: "read:workspaces",
-          prevHash: input.prev_hash,
-          currentHash: file.hash,
-          message: "workspaces.json changed since prev_hash",
-          echoCurrent: false,
-        });
+        const { abs, file } = readForWrite(ctx, v.root, input.prev_hash);
         const ws = workspacesOf(file.data);
         if (!(input.name in ws))
           throw err.noteNotFound("workspace not found", { name: input.name });
@@ -164,21 +177,7 @@ export function buildWorkspaceTools(deps: M3Deps): ToolDefinition[] {
       conditionallyDestructive: true,
       handler: (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
-        enforcePathAcl(ctx.acl, "write", WORKSPACES_PATH, v.root, ctx.grantedScopes);
-        // Whether the name exists, the active name and the count are read from the file: gate first.
-        requireContentRead(ctx, v.root, WORKSPACES_PATH, "read:workspaces");
-        const abs = resolveVaultPath(v.root, WORKSPACES_PATH);
-        const file = readJsonFile<WorkspacesDoc>(abs, { workspaces: {} });
-        checkCas({
-          ctx,
-          root: v.root,
-          rel: WORKSPACES_PATH,
-          readScope: "read:workspaces",
-          prevHash: input.prev_hash,
-          currentHash: file.hash,
-          message: "workspaces.json changed since prev_hash",
-          echoCurrent: false,
-        });
+        const { abs, file } = readForWrite(ctx, v.root, input.prev_hash);
         const data = file.data;
         if (
           !data.workspaces ||

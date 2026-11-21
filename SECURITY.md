@@ -320,7 +320,6 @@ Known residuals, accepted for now:
 - Append acknowledgements omit the whole-note byte count for non-readers. Content-dependent patch, tag,
   frontmatter and table writes require read access; append scans only the non-reader's input. Other
   size and count fields across mutating tools have not received a comprehensive behavioral audit.
-- `open_workspace` answers differently for a workspace name that exists and one that does not.
 - Batch-commit drift errors withhold `expected` and `actual` from every caller, readers included.
 - In `block` mode, an append by a write-only caller is judged on its own bytes only. A secret that the existing
   bytes and the appended text form together across the join is not caught, and in `redact` mode the existing
