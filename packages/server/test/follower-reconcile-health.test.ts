@@ -117,6 +117,18 @@ describe("follower reports the leader's persisted reconcile state (GH #995)", ()
     });
   });
 
+  it("filters persisted errors to this follower's vaults", () => {
+    const db = openMemoryDb();
+    provisionCacheDb(db);
+    leaderPass(db, freshIndexHealth(), [
+      { vault: "v1", error: "own error" },
+      { vault: "other", error: "other error" },
+    ]);
+    expect(processWith(db, { current: "follower" }).health()).toMatchObject({
+      detail: { reconcile_errors: [{ vault: "v1", error: "own error" }] },
+    });
+  });
+
   it("a leader keeps reporting its own in-memory state, tagged self", () => {
     const db = openMemoryDb();
     provisionCacheDb(db);

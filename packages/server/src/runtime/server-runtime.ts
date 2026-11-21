@@ -53,6 +53,7 @@ import {
   createReconcileRunner,
   wireJobHandlers,
 } from "./plane-wiring";
+import { metadataNotesReady } from "./reconcile-state";
 import type { RuntimeCoreDeps } from "./runtime-core-types";
 import { wireRuntimeCore } from "./runtime-core-wiring";
 import { schedulerVaults, wireScheduler } from "./scheduler-wiring";
@@ -364,7 +365,9 @@ export async function buildServerRuntime(
     // GH #994 follow-up: M1's memoryDefense guard — M1 wires before wireBridges builds its own map.
     const memoryDefenseForM1 = buildMemoryDefenseLookup(config.vaults);
 
+    const metadataReady = metadataNotesReady(db, leaderElection, indexHealth);
     wireM1Tools({
+      metadataReady,
       registry,
       config,
       representation: indexResources.representation,
@@ -410,6 +413,7 @@ export async function buildServerRuntime(
     const runSandboxSessionRerun = makeSandboxRerun(config, configPath, buildServerRuntime);
 
     wireDomainTools({
+      metadataReady,
       registry,
       config,
       vaultRegistry,
@@ -670,14 +674,8 @@ export async function buildServerRuntime(
     // F3: JOIN the reconcile BEFORE draining below (was the other way round) — see shutdown-phase.ts.
     await joinReconcileOrExit(runReconcile.currentRun(), SHUTDOWN_DRAIN_MS);
     // THE-462/THE-457/GH #995/F3: scheduler/index/job drain race one deadline, same exit-then-throw.
-    const drainOpts = {
-      scheduler,
-      indexCoordinator,
-      jobRunner,
-      taskRuns,
-      drainMs: SHUTDOWN_DRAIN_MS,
-    };
-    await raceShutdownPhaseOrExit(drainOpts);
+    const drainMs = SHUTDOWN_DRAIN_MS;
+    await raceShutdownPhaseOrExit({ scheduler, indexCoordinator, jobRunner, taskRuns, drainMs });
     closeStdioOpened(db, Date.now()); // GH #1457: the stdio session this process opened, if any
     await leaderElection.close(); // F3: release the lock LAST, once every writer above has stopped
     morgiana.emit(defaultVaultId, "tc.server.shutdown");

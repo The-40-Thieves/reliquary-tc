@@ -205,9 +205,27 @@ export function readPersistedReconcileState(db: Database): PersistedReconcileSta
 export function reconcileView(args: {
   isFollower: boolean;
   db: Database | undefined;
+  vaults: readonly { id: string }[];
   self: PersistedReconcileState;
 }): ReconcileView {
   if (!args.isFollower) return { ...args.self, source: "self" };
   const persisted = args.db ? readPersistedReconcileState(args.db) : undefined;
-  return { ...(persisted ?? PENDING), source: "leader" };
+  const state = persisted ?? PENDING;
+  return {
+    ...state,
+    reconcileErrors: state.reconcileErrors.filter((e) => args.vaults.some((v) => v.id === e.vault)),
+    source: "leader",
+  };
+}
+
+export function metadataNotesReady(
+  db: Database,
+  role: { isLeader: () => boolean },
+  health: { notesReady: boolean },
+): () => boolean {
+  return () => {
+    if (role.isLeader() || health.notesReady) return health.notesReady;
+    // Through the epoch-checked reader: a row a superseded leader wrote is not this leader's word.
+    return readPersistedReconcileState(db)?.notesReady === true;
+  };
 }
