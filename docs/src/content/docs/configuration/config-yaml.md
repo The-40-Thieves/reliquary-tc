@@ -185,7 +185,7 @@ Cross-checks refused at load: `auth.authorizationServers`, when set, must list `
 to `[issuer]`); `auth.jwksUri` may not point at this server's own `/.well-known/jwks.json`; `clientId`s must be
 unique. Hand-minted tokens keep their rules: enabling the AS does not bind an `aud` to them (a hand-minted HS256
 token without `aud` is still accepted); only `auth.audience`, an explicit `auth.authorizationServers` list
-with `auth.resource`, or a JWKS key source with `auth.resource`, does that. The tokens the AS issues are always checked against `auth.resource`.
+with `auth.resource`, or a JWKS key source with `auth.resource` (unless `auth.allowMissingAudience` is `true`), does that. The tokens the AS issues are always checked against `auth.resource`.
 
 A configured `auth.jwks` or `auth.jwksFile` that contains the public key of the server's own `as` key stops the
 server at boot, naming the kid: a JWKS key is verified under the hand-minted-token rules, which would let a token

@@ -103,8 +103,9 @@ export function planMint(auth: AuthShape, cmd: TokenMintCmd, now: number): MintP
     );
   }
   // An explicit --aud wins; otherwise inherit whatever the server will verify against. `resource`
-  // is the fallback because the verifier defaults the audience to it when PRM is configured or a
-  // JWKS verifies the tokens (THE-456), so a token minted from a resource-only config matches.
+  // is the fallback because the verifier defaults the audience to it when PRM is configured, or a
+  // JWKS verifies the tokens without `allowMissingAudience` (THE-456). Where nothing is bound the
+  // extra `aud` is ignored, so a token minted from a resource-only config matches either way.
   const bound = auth.audience ?? auth.resource;
   const aud = cmd.aud ?? bound;
   if (bound && !aud) {

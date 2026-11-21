@@ -318,7 +318,7 @@ export const AuthConfigSchema = z.object({
     .union([z.string(), z.array(z.string())])
     .optional()
     .describe(
-      "Expected `aud` claim. Binding it rejects a token an issuer minted for a DIFFERENT service (confused deputy). Required with a JWKS or a non-loopback bind; defaults to `resource` when Protected Resource Metadata is configured or a JWKS verifies the tokens.",
+      "Expected `aud` claim. Binding it rejects a token an issuer minted for a DIFFERENT service (confused deputy). Required with a JWKS or a non-loopback bind; defaults to `resource` when Protected Resource Metadata is configured, or when a JWKS verifies the tokens and `allowMissingAudience` is not `true`.",
     ),
   allowMissingAudience: z
     .boolean()

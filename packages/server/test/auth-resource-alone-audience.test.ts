@@ -52,7 +52,9 @@ describe("auth.resource alone (no authorizationServers) with a JWKS", () => {
 
   it("a token with no audience is refused", async () => {
     const { jwks, mint } = await keyed();
-    await expect(verifier({ jwks, resource: RESOURCE }).verify(await mint())).rejects.toThrow();
+    await expect(verifier({ jwks, resource: RESOURCE }).verify(await mint())).rejects.toMatchObject(
+      { reason: "missing_claim" },
+    );
   });
 
   it("a token minted for the resource is accepted", async () => {

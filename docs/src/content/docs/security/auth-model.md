@@ -144,9 +144,7 @@ The config schema and the verifier agree on `auth.resource`:
 | `auth.resource` **alone** | accepted | enforces `resource` as the audience (no audience with `allowMissingAudience: true`) |
 | neither `audience` nor `resource` | refused at config load | n/a |
 
-In the next minor release the two are aligned (a `resource`-only JWKS config stops being accepted without an
-enforced audience). Until then, set `auth.audience` explicitly. `test/auth-resource-alone-audience.test.ts` pins
-the current behaviour.
+`test/auth-resource-alone-audience.test.ts` pins this behaviour.
 
 **Key rotation is `kid`-based:** publish the old and new keys together in the JWKS
 set and the token's `kid` header selects the verifying key (handled by `jose`).
