@@ -935,21 +935,20 @@ test("SECURITY.md accepts both release identities and nothing else", () => {
 
 // The platform packages are published by `napi pre-publish`, which runs `npm publish` itself, so
 // the `--provenance` flag the umbrella packages get never reaches them. Provenance is asked for
-// twice: in each generated package's publishConfig, and in the environment of the napi step.
+// twice: in the publishConfig of each generated package, and in the environment of the napi step.
 test("the napi-published platform packages are published with provenance", () => {
   const publishNpm = jobBlock("publish-npm");
-  const patch = publishNpm.match(
-    /- name: make platform sub-packages public[\s\S]*?(?=\n {6}- name: |\n {6}# )/,
-  );
-  assert.ok(patch, "the step that patches the platform package.json files exists");
-  assert.match(patch[0], /access:"public",provenance:true/, "publishConfig.provenance is set");
-  const napi = publishNpm.match(
-    /- name: publish platform sub-packages \(napi\)[\s\S]*?napi pre-publish[^\n]*/,
-  );
-  assert.ok(napi, "the napi publish step exists");
-  assert.match(
-    napi[0],
-    /env:\n\s+NPM_CONFIG_PROVENANCE: "true"/,
-    "the napi step asks npm for provenance",
-  );
+  // A step is the text from its `- name:` line to the next step, or to the comment above it.
+  const step = (name) => {
+    const from = publishNpm.indexOf(`- name: ${name}`);
+    assert.ok(from >= 0, `step "${name}" exists`);
+    const rest = publishNpm.slice(from + 1);
+    const next = rest.search(/\n {6}(?:- name: |# )/);
+    return next < 0 ? rest : rest.slice(0, next);
+  };
+  const patch = step("make platform sub-packages public");
+  assert.match(patch, /publishConfig[^\n]*provenance:\s*true/, "publishConfig.provenance is set");
+  const napi = step("publish platform sub-packages (napi)");
+  assert.match(napi, /napi pre-publish/, "the step runs napi pre-publish");
+  assert.match(napi, /NPM_CONFIG_PROVENANCE: "true"/, "the napi step asks npm for provenance");
 });

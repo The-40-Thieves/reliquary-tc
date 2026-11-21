@@ -392,9 +392,9 @@ jobs:
       # + the umbrella optionalDependencies are generated and published by `napi pre-publish`.
       - name: publish platform sub-packages (napi)
         if: steps.preflight.outputs.already_published != 'true'
-        working-directory: packages/native
         env:
           NPM_CONFIG_PROVENANCE: "true"
+        working-directory: packages/native
         run: ./node_modules/.bin/napi pre-publish -t npm --no-gh-release
       # publish straight to the release dist-tag, in dependency order, with the
       # user-facing `reliquary-tc` LAST. This replaces the earlier publish-to-`pending`-then-promote
