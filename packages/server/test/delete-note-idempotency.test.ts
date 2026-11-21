@@ -69,14 +69,16 @@ describe("delete_note with an idempotency_key", () => {
   });
 
   it("a refusal before the delete starts leaves the key free for a retry", async () => {
-    v = makeM6Vault({ files: { "a.md": "A\n" }, register: () => {} });
-    const key = { idempotency_key: "del-4" };
-    const stale = { vault: "test", path: "a.md", prev_hash: "0".repeat(64), ...key };
-    const refused = await v.callConfirmed("delete_note", stale, CALLER);
-    expect(refused.ok).toBe(false);
-    expect(v.exists("a.md")).toBe(true);
-    // Nothing happened, so the same key and arguments run for real once the note matches.
-    const again = await v.callConfirmed("delete_note", stale, CALLER);
-    expect(again.ok ? null : again.error.code).not.toBe("indeterminate_outcome");
+    v = makeM6Vault({ files: { "other.md": "O\n" }, register: () => {} });
+    const input = { vault: "test", path: "a.md", idempotency_key: "del-4" };
+    const refused = await v.callConfirmed("delete_note", input, CALLER);
+    expect(refused.ok ? null : refused.error.code, JSON.stringify(refused)).toBe("note_not_found");
+
+    // Nothing happened, so once the note exists the same key and arguments run for real.
+    v.write("a.md", "A\n");
+    const again = await v.callConfirmed("delete_note", input, CALLER);
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(again.meta?.idempotent_replay).not.toBe(true);
+    expect(v.exists("a.md")).toBe(false);
   });
 });
