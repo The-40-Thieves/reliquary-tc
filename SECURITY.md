@@ -942,7 +942,9 @@ but `resource` is used as the audience only when Protected Resource Metadata is 
 (`authorizationServers` set too), so a `resource`-only config bound nothing and logged only a stderr line (none for
 `jwksUri`). That is now a deprecation at startup, in `doctor` (`auth.jwks-audience`, a warning with the fix) and
 in `server_health`, and becomes a startup error in the next minor release; `auth.allowMissingAudience: true` is the
-explicit opt-out. A configured audience is enforced exactly as before.
+explicit opt-out. A configured audience is enforced exactly as before. Since then, a JWKS key source with
+`resource` and no `audience` enforces `resource` as the audience, so no config that loads is left without one
+unless it sets `auth.allowMissingAudience: true`.
 
 Accepted residuals, in addition to the one below: the OIDC address check decodes the well-known NAT64
 prefix `64:ff9b::/96` and the 6to4 and Teredo embeddings, but not an operator-specific NAT64 prefix (RFC 6052

@@ -38,10 +38,13 @@ const JWKS = {
 
 const STDIO_ONLY = { http: false, prometheus: false };
 
-/** Boot with `auth` and the given listeners; returns everything written to stderr. */
+/** Boot with `auth` and the given listeners; returns everything written to stderr. `unbound` drops
+ *  the resource after the schema has run: a JWKS with no audience at all, which no config that
+ *  loads can express. */
 async function boot(
   auth: Record<string, unknown>,
   listeners: { http: boolean; prometheus: boolean },
+  unbound = false,
 ): Promise<string> {
   const root = makeTempDir("tw-jwks-startup-");
   dirs.push(root);
@@ -60,6 +63,7 @@ async function boot(
     },
     observability: { prometheus: { enabled: listeners.prometheus, bind: "127.0.0.1", port: 0 } },
   });
+  if (unbound) delete (config.auth as { resource?: string }).resource;
   const wiring = await wireTransports({
     config,
     version: "t",
@@ -78,16 +82,17 @@ async function boot(
 describe("the missing-audience deprecation is emitted on stdio-only boot too", () => {
   const noAudience = { jwks: JWKS, resource: "https://r.example/mcp" };
   it("stdio only (no HTTP, no /metrics): the same warning text", async () => {
-    const out = await boot(noAudience, STDIO_ONLY);
+    const out = await boot(noAudience, STDIO_ONLY, true);
     expect(out).toMatch(/auth: DEPRECATED: auth\.mode 'jwt' verifies tokens against a JWKS/);
     expect(out).toMatch(/allowMissingAudience/);
   });
   it("with HTTP on it is emitted exactly once, not once per call site", async () => {
-    const out = await boot(noAudience, { http: true, prometheus: true });
+    const out = await boot(noAudience, { http: true, prometheus: true }, true);
     expect(out.match(/no audience is enforced/g)).toHaveLength(1);
   });
-  it("stdio only with an audience, or the opt-out: silent", async () => {
+  it("stdio only with an audience, a resource, or the opt-out: silent", async () => {
     expect(await boot({ jwks: JWKS, audience: "https://r" }, STDIO_ONLY)).not.toMatch(/DEPRECATED/);
+    expect(await boot(noAudience, STDIO_ONLY)).not.toMatch(/DEPRECATED/);
     expect(await boot({ ...noAudience, allowMissingAudience: true }, STDIO_ONLY)).not.toMatch(
       /DEPRECATED/,
     );
