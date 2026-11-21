@@ -95,6 +95,7 @@ export const CANONICAL_ENTRYPOINTS = new Set([
   "readableStoredRow",
   "storedAclPathOf",
   "defaultDeniedUnderEitherName",
+  "immutableGlobUnderEitherName",
 ]);
 
 /** A database column that holds a vault path: `path`, `source_path`, `targetPath`, ... */

@@ -292,6 +292,18 @@ export function defaultDeniedUnderEitherName(root: string, rel: string): boolean
   );
 }
 
+export function immutableGlobUnderEitherName(
+  acl: FolderAcl | undefined,
+  root: string,
+  rel: string,
+): string | null {
+  if (!acl) return null;
+  return (
+    acl.immutableGlobFor(normalizeVaultPath(rel)) ??
+    acl.immutableGlobFor(resolveVaultPathChecked(root, rel).aclRel)
+  );
+}
+
 /** Why a secondary rewrite leaves a note alone: an immutable raw source or a protected layer (GH #1384). */
 export type RewriteSkipKind = "immutable" | "schema_file";
 

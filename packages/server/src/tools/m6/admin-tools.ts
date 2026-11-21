@@ -17,7 +17,12 @@ import { explainVisibility } from "../../mcp/visibility";
 import { deriveRrfK, resolveRetrievalDefaults } from "../../search/retrieval-defaults";
 import { readVaultIndexStats } from "../../search/vault-index-stats";
 import { ResponseFormatInput, resolveResponseFormat } from "../../util/response-format";
-import { evaluatePathAcl, isHardLinkedFile, pathScopesSatisfied } from "../../vault/acl-path";
+import {
+  evaluatePathAcl,
+  immutableGlobUnderEitherName,
+  isHardLinkedFile,
+  pathScopesSatisfied,
+} from "../../vault/acl-path";
 import {
   assertWritableVaultPath,
   normalizeVaultPath,
@@ -142,7 +147,7 @@ function scopeFamilyGranted(scopes: string[], op: string): boolean {
   });
 }
 
-/** inspect_acl: five early returns that TypeScript widens to one shape (same pattern as m7/m8's
+/** inspect_acl: seven early returns that TypeScript widens to one shape (same pattern as m7/m8's
  *  multi-arm tools) — `denied_by` is the only field that is ever absent (the success arm). `${op}
  *  _paths` only ever fires for read/write/delete: execute is not path-scoped, so its only denial
  *  path is the read_only kill switch checked before evaluatePathAcl runs. */
@@ -379,7 +384,9 @@ export function buildAdminTools(deps: M6Deps): ToolDefinition[] {
         // 1 + 2. read-only kill switch AND per-op path whitelist, via the SAME pure
         //        evaluator enforcePathAcl delegates to (no reimplementation). execute
         //        is not path-scoped, so only the scope grant below applies.
-        if (input.op === "write") {
+        // A read-only vault refuses a write before its name is looked at, so the kill switch
+        // (reported by the evaluator below) wins over an invalid name.
+        if (input.op === "write" && !acl?.readOnly) {
           try {
             assertWritableVaultPath(v.root, input.path);
           } catch {
@@ -392,16 +399,16 @@ export function buildAdminTools(deps: M6Deps): ToolDefinition[] {
             };
           }
         }
-        if (
-          input.op !== "read" &&
-          input.op !== "execute" &&
-          acl?.immutableGlobFor(normalizeVaultPath(input.path)) != null
-        )
+        const immutableGlob =
+          input.op === "read" || input.op === "execute"
+            ? null
+            : immutableGlobUnderEitherName(acl, v.root, input.path);
+        if (immutableGlob !== null)
           return {
             allowed: false,
             denied_by: `${input.op}_paths`,
             kill_switch: false,
-            matched_rule: acl.immutableGlobFor(normalizeVaultPath(input.path)),
+            matched_rule: immutableGlob,
             effective_scopes,
           };
 

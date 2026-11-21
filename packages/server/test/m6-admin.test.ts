@@ -223,7 +223,20 @@ describe("inspect_acl", () => {
         scopes: ["*"],
       }),
     );
-    expect(out.allowed).toBe(false);
+    expect(out).toMatchObject({ allowed: false, denied_by: "invalid_write_path" });
+  });
+
+  it("reports the kill switch, not the name, for an invalid write name on a read-only vault", async () => {
+    v = makeM6Vault({ acl: { readOnly: true }, register });
+    const out = data<{ allowed: boolean; denied_by: string; kill_switch: boolean }>(
+      await v.call("inspect_acl", {
+        vault: "test",
+        path: "bad:name.md",
+        op: "write",
+        scopes: ["*"],
+      }),
+    );
+    expect(out).toMatchObject({ allowed: false, denied_by: "read_only", kill_switch: true });
   });
 
   it("allows a write when path + scope permit", async () => {
