@@ -41,4 +41,16 @@ describe("isHardLinkedFile when the stat fails", () => {
     const dir = (): Stats => ({ isFile: () => false, nlink: 3 }) as unknown as Stats;
     expect(isHardLinkedFile("/vault/dir", dir)).toBe(false);
   });
+
+  // A stat that succeeds but gives no usable count is as unknown as one that fails.
+  it("refuses a regular file whose link count is not a number", () => {
+    expect(isHardLinkedFile("/vault/a.md", fileWith(Number.NaN))).toBe(true);
+    const missing = (): Stats => ({ isFile: () => true }) as unknown as Stats;
+    expect(isHardLinkedFile("/vault/a.md", missing)).toBe(true);
+  });
+
+  // Some filesystems report a count of 0 for an ordinary file; that is not an alias.
+  it("allows a regular file whose link count reads as 0", () => {
+    expect(isHardLinkedFile("/vault/a.md", fileWith(0))).toBe(false);
+  });
 });
