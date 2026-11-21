@@ -235,7 +235,9 @@ export async function wireTransports(deps: TransportWiringDeps): Promise<Transpo
       config.transports.http.enabled || config.observability.prometheus.enabled;
     const verifier: TokenVerifier | undefined =
       oidcVerifier ??
-      (listensForBearers ? (buildJwtVerifier(config.auth, authRegistry) ?? undefined) : undefined);
+      (listensForBearers
+        ? (buildJwtVerifier(config.auth, authRegistry, oauthDb?.db) ?? undefined)
+        : undefined);
     // buildJwtVerifier says it when it runs; a stdio-only boot never builds one, but the config is
     // the same and the operator should hear it.
     if (!listensForBearers) warnJwksWithoutAudience(config.auth);
