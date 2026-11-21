@@ -111,6 +111,7 @@ RUN apt-get update \
 # provider `search_semantic` cannot work at all without.
 COPY --from=build --chown=bun:bun /app/packages/server/dist /app/packages/server/dist
 COPY --from=build --chown=bun:bun /app/packages/embedder-local /app/packages/embedder-local
+COPY --from=build --chown=bun:bun /app/LICENSE /app/NOTICE /app/
 # Runtime-only node_modules (sqlite-vec, @the-40-thieves/reliquary-tc-native, @redis/client and its
 # dependencies), copied to packages/server/node_modules so the bare specifiers resolve from dist/ by
 # the ordinary walk up. A few tens of MB; the rest of the tree stays out.
