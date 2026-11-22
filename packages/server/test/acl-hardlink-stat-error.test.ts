@@ -1,0 +1,61 @@
+// The hard-link check stats the target. A stat that fails for any reason other than "nothing is
+// there" leaves the link count unknown, and unknown must refuse: the check used to answer "not
+// hard-linked" for every error, which let an unverifiable target through.
+import type { Stats } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { isHardLinkedFile } from "../src/vault/hard-link";
+
+const failing = (code: string) => (): Stats => {
+  throw Object.assign(new Error(code), { code });
+};
+const fileWith = (nlink: number) => (): Stats =>
+  ({ isFile: () => true, nlink }) as unknown as Stats;
+
+describe("isHardLinkedFile when the stat fails", () => {
+  it.each(["EACCES", "EPERM", "EIO", "ELOOP", "EMFILE"])(
+    "refuses when the stat fails with %s",
+    (code) => {
+      expect(isHardLinkedFile("/vault/a.md", failing(code))).toBe(true);
+    },
+  );
+
+  it("refuses when the error carries no code", () => {
+    const stat = (): Stats => {
+      throw new Error("unexpected");
+    };
+    expect(isHardLinkedFile("/vault/a.md", stat)).toBe(true);
+  });
+
+  // A write target that does not exist yet has no inode to alias.
+  it.each(["ENOENT", "ENOTDIR"])("allows an absent target (%s)", (code) => {
+    expect(isHardLinkedFile("/vault/new.md", failing(code))).toBe(false);
+  });
+
+  it("allows an absent target reported as undefined", () => {
+    expect(isHardLinkedFile("/vault/new.md", () => undefined)).toBe(false);
+  });
+
+  it("still reads the link count when the stat succeeds", () => {
+    expect(isHardLinkedFile("/vault/a.md", fileWith(1))).toBe(false);
+    expect(isHardLinkedFile("/vault/a.md", fileWith(2))).toBe(true);
+    const dir = (): Stats => ({ isFile: () => false, nlink: 3 }) as unknown as Stats;
+    expect(isHardLinkedFile("/vault/dir", dir)).toBe(false);
+  });
+
+  // A stat that succeeds but gives no usable count is as unknown as one that fails.
+  it("refuses a regular file whose link count is not a number", () => {
+    expect(isHardLinkedFile("/vault/a.md", fileWith(Number.NaN))).toBe(true);
+    const missing = (): Stats => ({ isFile: () => true }) as unknown as Stats;
+    expect(isHardLinkedFile("/vault/a.md", missing)).toBe(true);
+  });
+
+  // `null <= 1` and `"0" <= 1` are both true in JavaScript, so the type is checked first.
+  it.each([null, "0", "1"])("refuses a link count of %j, which only coerces to a number", (n) => {
+    expect(isHardLinkedFile("/vault/a.md", fileWith(n as unknown as number))).toBe(true);
+  });
+
+  // Some filesystems report a count of 0 for an ordinary file; that is not an alias.
+  it("allows a regular file whose link count reads as 0", () => {
+    expect(isHardLinkedFile("/vault/a.md", fileWith(0))).toBe(false);
+  });
+});

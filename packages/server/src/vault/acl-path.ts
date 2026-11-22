@@ -1,4 +1,3 @@
-import { statSync } from "node:fs";
 import { err, grantsAll } from "@the-40-thieves/reliquary-tc-shared";
 // Per-path ACL enforcement — activates the dormant M0 FolderAcl seam.
 // Every path-based tool calls this with the operation kind and the resolved
@@ -17,6 +16,7 @@ import { CASE_INSENSITIVE_FS, type FolderAcl, foldPath, isDefaultDenied } from "
 // path gets redacted, rather than a second copy that could drift.
 import { redactSecrets } from "../util/redact";
 import { recordAclCheck } from "./acl-audit";
+import { isHardLinkedFile } from "./hard-link";
 import { assertWritableVaultPath, normalizeVaultPath, resolveVaultPathChecked } from "./paths";
 
 export type AclOp = "read" | "write" | "delete";
@@ -153,15 +153,6 @@ export function pathScopesSatisfied(
   if (!acl.declaresPathScopes) return true;
   const required = acl.scopesForPath(path);
   return required.length === 0 || grantsAll(grantedScopes, required);
-}
-
-export function isHardLinkedFile(abs: string): boolean {
-  try {
-    const st = statSync(abs);
-    return st.isFile() && st.nlink > 1;
-  } catch {
-    return false;
-  }
 }
 
 export function enforcePathAcl(

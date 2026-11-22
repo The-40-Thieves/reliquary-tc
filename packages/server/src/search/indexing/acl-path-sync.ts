@@ -11,7 +11,7 @@
 import { inWriteTransaction, type WriteTxnHooks } from "../../db/txn";
 import type { Database } from "../../db/types";
 import type { AclPath } from "../../vault/acl-identity";
-import { isHardLinkedFile } from "../../vault/acl-path";
+import { isHardLinkedFile } from "../../vault/hard-link";
 import { resolveVaultPathChecked } from "../../vault/paths";
 import {
   ACL_PATH_TABLES,
