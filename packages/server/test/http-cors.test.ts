@@ -20,7 +20,8 @@ const RESOURCE = "https://vault.example.com/mcp";
 const ISSUER = "https://vault.example.com";
 const ORIGIN = "https://app.example.com";
 const ALLOW_METHODS = "POST";
-const ALLOW_HEADERS = "Authorization, Content-Type, Mcp-Session-Id, Mcp-Protocol-Version";
+const ALLOW_HEADERS =
+  "Authorization, Content-Type, Mcp-Session-Id, Mcp-Protocol-Version, Idempotency-Key";
 const EXPOSE_HEADERS = "Mcp-Session-Id, WWW-Authenticate, Mcp-Protocol-Version";
 const MCP_BODY = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
 

@@ -36,6 +36,8 @@ reason `no_identity`:
   workspace sessions `start_session` / `end_session`; `vault_context` refuses only its `include_work` leg;
 - any call carrying an **`idempotency_key`**, because the key's namespace is the caller.
 
+HTTP clients can also send `Idempotency-Key` for tools that accept idempotency keys.
+
 Everything else keeps working for such a token (reading and writing notes, search, discovery).
 
 **Why a refusal and not an identity derived from the token (`jti`, a hash).** A derived identity is

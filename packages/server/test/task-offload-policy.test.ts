@@ -557,6 +557,7 @@ describe("every CallerContext key is accounted for by the offload path", () => {
       vaultId: "v9",
       vaultBound: true,
       transport: "http",
+      idempotencyKeyHeader: "key",
       persona: "researcher",
       authVerified: true,
       claimedProvenance: { model: "m" },
