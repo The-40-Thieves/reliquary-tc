@@ -141,9 +141,7 @@ async function delegate(
   return def.handler(def.inputSchema.parse(args), ctx);
 }
 
-// The active-file tools take no idempotency key: patch_note's `options` is not forwarded here, and
-// this tool does not declare acceptsIdempotencyKey.
-const { path: _path, options: _options, ...ActivePatchShape } = PatchInputShape;
+const { path: _path, ...ActivePatchShape } = PatchInputShape;
 const PatchActiveInput = z.object(ActivePatchShape).strict().superRefine(refinePatchInput);
 
 const ReadActiveInput = z
@@ -259,6 +257,7 @@ export function buildActiveFileTools(deps: M4Deps, lookup: DelegateLookup): Tool
 
     defineTool({
       name: "patch_active_file",
+      acceptsIdempotencyKey: true,
       domain: "workspace",
       vaultArg: "vault",
       description:
@@ -278,12 +277,12 @@ export function buildActiveFileTools(deps: M4Deps, lookup: DelegateLookup): Tool
 
     defineTool({
       name: "delete_active_file",
+      acceptsIdempotencyKey: true,
       domain: "workspace",
       vaultArg: "vault",
       description:
         "Delete the note currently open in the live Obsidian session (delete_note, aimed at the active note): to the vault's .trash mirror, or permanently. Destructive: requires human confirmation bound to the resolved note, so a confirmation raised while one note was active cannot be redeemed once another is. restore_note reads its undo from a snapshot when snapshots are enabled. Refuses a non-markdown active file.",
-      // No key here: this tool is not part of the idempotency surface (delete_note is).
-      inputSchema: DeleteInput.omit({ path: true, idempotency_key: true }),
+      inputSchema: DeleteInput.omit({ path: true }),
       outputSchema: DeleteNoteOutput,
       requiredScopes: ["delete:notes"],
       tags: ["plugin-bridge"],

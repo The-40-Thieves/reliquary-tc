@@ -50,7 +50,7 @@ import {
 } from "./no-follow-walk";
 import { assertCreatableName, contentHash } from "./paths";
 import { O_NOFOLLOW, removeTemp, writeAll, writeTempFile } from "./temp-write";
-import { gateNoteWrite, preflightNoteWrite } from "./write-gate";
+import { gateNoteWrite, markBeforeNoteWrite, preflightNoteWrite } from "./write-gate";
 
 // O_NOFOLLOW and O_NONBLOCK are POSIX-only (undefined on Windows Node): 0 is a no-op there, and the
 // st_nlink inode check is the cross-platform guard.
@@ -600,9 +600,10 @@ export function writeNoteAtomicGuarded(
   content: string,
   createDirs: boolean,
   config: VaultMemoryDefenseConfig | undefined,
-  opts: { metrics?: MetricsRecorder; exclusive?: boolean } = {},
+  opts: { metrics?: MetricsRecorder; exclusive?: boolean; mark?: () => void } = {},
 ): { content: string; redactions: number } {
   const scan = enforceMemoryDefenseOnNoteWrite(config, path, content, opts);
+  markBeforeNoteWrite(opts.mark, abs, scan.content);
   writeNoteAtomic(abs, scan.content, createDirs, { exclusive: opts.exclusive ?? false });
   return scan;
 }

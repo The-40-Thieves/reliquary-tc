@@ -289,11 +289,17 @@ export function buildExperientialTools(deps: M8Deps): ToolDefinition[] {
 
     defineTool({
       name: "work_forget",
+      acceptsIdempotencyKey: true,
       principalOwned: true,
       domain: "knowledge",
       description:
         "Tombstone an experiential episode — the first-party forget verb for the work-memory tier. A forgotten episode never surfaces in work_search again; each successful forget appends a hash-chained forget_log row for forensics. Idempotent: a repeat call, foreign, or unknown episode id is a silent no-op (forgotten:false) that appends NO additional log row. P1.7: only your OWN episodes unless you hold admin:workspace — a foreign or unknown id is a silent no-op, not an error.",
-      inputSchema: z.object({ episode_id: z.string().min(1) }).strict(),
+      inputSchema: z
+        .object({
+          episode_id: z.string().min(1),
+          idempotency_key: z.string().min(1).max(128).optional(),
+        })
+        .strict(),
       outputSchema: availableWith({ episode_id: z.string(), forgotten: z.boolean() }),
       requiredScopes: ["write:workspace"],
       tags: ["experiential"],
@@ -308,6 +314,7 @@ export function buildExperientialTools(deps: M8Deps): ToolDefinition[] {
           // P1.7: forget only your OWN episodes unless you hold the elevated scope. The caller
           // predicate is added to the UPDATE (not a pre-check) so a foreign/absent id is a silent
           // no-op (forgotten:false) — no cross-principal existence oracle.
+          ctx.markEffectCommitted?.();
           const res = canCrossPrincipal(ctx)
             ? deps.edb
                 .prepare("UPDATE agent_episodes SET blocked = 1 WHERE id = ? AND blocked = 0")

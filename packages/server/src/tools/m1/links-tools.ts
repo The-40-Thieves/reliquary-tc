@@ -29,6 +29,7 @@ import { noteExists, readNote, writeNoteAtomic } from "../../vault/notes-io";
 import { contentHash, normalizeVaultPath, resolveVaultPath } from "../../vault/paths";
 import { pruneHubLinks } from "../../vault/prune";
 import { rewriteLinks } from "../../vault/rewrite";
+import { markBeforeNoteWrite } from "../../vault/write-gate";
 import { readRefusalShape } from "../read-refusals";
 import {
   type RewriteWarning,
@@ -187,6 +188,7 @@ const ScanInput = z
 const RewriteInput = z
   .object({
     vault: VaultId,
+    idempotency_key: z.string().min(1).max(128).optional(),
     from_target: z.string().min(1),
     to_target: z.string().min(1),
     folder: VaultPath.optional(),
@@ -253,6 +255,7 @@ function* planLinkRewriteSteps(
 const PruneInput = z
   .object({
     vault: VaultId,
+    idempotency_key: z.string().min(1).max(128).optional(),
     path: VaultPath,
     remove_unresolved: z.boolean().default(true),
     remove_duplicates: z.boolean().default(true),
@@ -439,6 +442,7 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
 
     defineTool({
       name: "rewrite_link",
+      acceptsIdempotencyKey: true,
       domain: "links",
       vaultArg: "vault",
       description:
@@ -489,6 +493,7 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
               metrics: deps.metrics,
             }).content,
           }));
+          ctx.markEffectCommitted?.();
           for (const e of scannedEdits) {
             writeNoteAtomic(resolveVaultPath(v.root, e.rel), e.text, false);
             deps.reindex?.(v.id, e.rel, e.text);
@@ -518,6 +523,7 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
 
     defineTool({
       name: "prune_hub_links",
+      acceptsIdempotencyKey: true,
       domain: "links",
       vaultArg: "vault",
       // Reads the hub note (input.path); the write targets are the computed set of notes linking to
@@ -578,6 +584,7 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
           finalText = enforceMemoryDefenseOnNoteWrite(mdConfig, rel, text, {
             metrics: deps.metrics,
           }).content;
+          markBeforeNoteWrite(ctx.markEffectCommitted, abs, finalText);
           writeNoteAtomic(abs, finalText, false);
           deps.reindex?.(v.id, rel, finalText);
         }

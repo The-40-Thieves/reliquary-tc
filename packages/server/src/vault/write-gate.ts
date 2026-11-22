@@ -99,6 +99,19 @@ export function preflightNoteWrite(abs: string, text: string | Buffer): void {
   current.passed.add(key);
 }
 
+/** Write-ahead marking for a note write: the gate runs first, so a refused write leaves the
+ *  caller's idempotency claim and confirmation token usable again; the mark then lands before the
+ *  first byte does. A no-op without a mark. */
+export function markBeforeNoteWrite(
+  mark: (() => void) | undefined,
+  abs: string,
+  text: string,
+): void {
+  if (mark === undefined) return;
+  preflightNoteWrite(abs, text);
+  mark();
+}
+
 /** Tell the frame's gate that a note moved from `srcRel` to `destRel`. A no-op outside a live frame. */
 export function noteWriteOrigin(destRel: string, srcRel: string): void {
   const current = frame.getStore();

@@ -453,6 +453,7 @@ export function buildPeriodicTools(deps: M3Deps): ToolDefinition[] {
 
     defineTool({
       name: "find_or_create_periodic_note",
+      acceptsIdempotencyKey: true,
       domain: "workspace",
       vaultArg: "vault",
       description:
@@ -464,6 +465,7 @@ export function buildPeriodicTools(deps: M3Deps): ToolDefinition[] {
           date: z.string().optional(),
           include_content: z.boolean().default(true),
           expand_template: z.boolean().default(false),
+          idempotency_key: z.string().min(1).max(128).optional(),
           ...ResponseFormatInput,
         })
         .strict(),
@@ -496,6 +498,7 @@ export function buildPeriodicTools(deps: M3Deps): ToolDefinition[] {
                 "expand_template requires the write:templater scope",
                 { required: ["write:templater"] },
               );
+            ctx.markEffectCommitted?.();
             expanded = await expandViaTemplater(deps, v.id, templateUsed, resolved.path);
           }
           // same template-can-carry-a-secret guard as create_periodic_note above.
@@ -506,6 +509,7 @@ export function buildPeriodicTools(deps: M3Deps): ToolDefinition[] {
             try {
               const scan = writeNoteAtomicGuarded(abs, resolved.path, content, true, mdConfig, {
                 metrics: deps.metrics,
+                mark: input.expand_template && templateUsed ? undefined : ctx.markEffectCommitted,
                 exclusive: true,
               });
               deps.reindex?.(v.id, resolved.path, scan.content);

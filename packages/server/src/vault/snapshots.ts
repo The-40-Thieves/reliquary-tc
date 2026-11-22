@@ -3,6 +3,7 @@
 // capture. captureSnapshot() is called by the M1 write handlers BEFORE they mutate, when
 // config.snapshots.enabled, so a mistaken write is recoverable. Retention keeps the newest N
 // per note and GCs blobs no longer referenced by any surviving snapshot.
+import { inSavepoint } from "../db/txn";
 import type { Database } from "../db/types";
 import { contentHash } from "./paths";
 
@@ -40,20 +41,25 @@ export function captureSnapshot(
   op: string,
   now: () => number = Date.now,
   prune = true,
+  markEffectCommitted?: () => void,
 ): number | null {
   if (!cfg?.enabled) return null;
   const hash = contentHash(content);
   const size = Buffer.byteLength(content, "utf8");
-  db.prepare(
-    "INSERT OR IGNORE INTO snapshot_blobs (vault_id, hash, content, size) VALUES (?, ?, ?, ?)",
-  ).run(vaultId, hash, content, size);
-  const info = db
-    .prepare(
-      "INSERT INTO note_snapshots (vault_id, path, hash, op, created_at) VALUES (?, ?, ?, ?, ?)",
-    )
-    .run(vaultId, path, hash, op, now());
-  if (prune) pruneSnapshots(db, vaultId, path, cfg.retention);
-  return Number(info.lastInsertRowid);
+  const write = () => {
+    markEffectCommitted?.();
+    db.prepare(
+      "INSERT OR IGNORE INTO snapshot_blobs (vault_id, hash, content, size) VALUES (?, ?, ?, ?)",
+    ).run(vaultId, hash, content, size);
+    const info = db
+      .prepare(
+        "INSERT INTO note_snapshots (vault_id, path, hash, op, created_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(vaultId, path, hash, op, now());
+    if (prune) pruneSnapshots(db, vaultId, path, cfg.retention);
+    return Number(info.lastInsertRowid);
+  };
+  return markEffectCommitted ? inSavepoint(db, write) : write();
 }
 
 /** Drop ledger rows a write that never landed captured; their blobs go with the next retention pass. */

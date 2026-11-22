@@ -155,6 +155,7 @@ const DeleteInput = z
     vault: VaultId,
     path: VaultPath,
     permanent: z.boolean().default(false),
+    idempotency_key: z.string().min(1).max(128).optional(),
   })
   .strict();
 
@@ -626,6 +627,7 @@ export function buildAttachmentTools(deps: M3Deps): ToolDefinition[] {
         "Delete an attachment (to the vault's .trash mirror, or permanently). Destructive — requires confirmation. Reports notes that still reference it.",
       inputSchema: DeleteInput,
       outputSchema: DeleteAttachmentOutput,
+      acceptsIdempotencyKey: true,
       requiredScopes: ["delete:attachments"],
       destructive: true,
       handler: (input, ctx) => {
@@ -650,6 +652,7 @@ export function buildAttachmentTools(deps: M3Deps): ToolDefinition[] {
           );
         const st = statNote(abs);
         let trashedTo: string | null = null;
+        ctx.markEffectCommitted?.();
         if (input.permanent) hardDelete(abs);
         else trashedTo = trashNote(v.root, rel);
         return {

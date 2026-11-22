@@ -175,6 +175,7 @@ export function buildBookmarkTools(deps: M3Deps): ToolDefinition[] {
 
     defineTool({
       name: "add_bookmark",
+      acceptsIdempotencyKey: true,
       domain: "workspace",
       vaultArg: "vault",
       pathAcl: () => [{ op: "write", path: BOOKMARKS_PATH }],
@@ -183,6 +184,7 @@ export function buildBookmarkTools(deps: M3Deps): ToolDefinition[] {
       inputSchema: z
         .object({
           vault: VaultId,
+          idempotency_key: z.string().min(1).max(128).optional(),
           bookmark: BookmarkItem,
           group: z.string().min(1).optional(),
           allow_duplicate: z.boolean().default(false),
@@ -230,6 +232,7 @@ export function buildBookmarkTools(deps: M3Deps): ToolDefinition[] {
           target.push(bm);
           added = true;
         }
+        ctx.markEffectCommitted?.();
         const { hash } = writeJsonFile(abs, data, file.indent, file.trailingNewline);
         return {
           vault: v.id,
@@ -244,6 +247,7 @@ export function buildBookmarkTools(deps: M3Deps): ToolDefinition[] {
 
     defineTool({
       name: "remove_bookmark",
+      acceptsIdempotencyKey: true,
       domain: "workspace",
       vaultArg: "vault",
       pathAcl: () => [{ op: "delete", path: BOOKMARKS_PATH }],
@@ -252,6 +256,7 @@ export function buildBookmarkTools(deps: M3Deps): ToolDefinition[] {
       inputSchema: z
         .object({
           vault: VaultId,
+          idempotency_key: z.string().min(1).max(128).optional(),
           match: MatchCriteria,
           group: z.string().min(1).optional(),
           prev_hash: z.string().optional(),
@@ -293,6 +298,7 @@ export function buildBookmarkTools(deps: M3Deps): ToolDefinition[] {
           data.items = r.kept;
           removed = r.removed;
         }
+        ctx.markEffectCommitted?.();
         const { hash } = writeJsonFile(abs, data, file.indent, file.trailingNewline);
         return {
           vault: v.id,

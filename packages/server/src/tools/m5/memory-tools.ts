@@ -12,7 +12,7 @@
 // P1.4 rule-scope gate still applies here.
 import { err, VaultId } from "@the-40-thieves/reliquary-tc-shared";
 import { z } from "zod";
-import { inWriteTransaction } from "../../db/txn";
+import { inSavepoint, inWriteTransaction } from "../../db/txn";
 import type { ToolDefinition } from "../../mcp/registry";
 import {
   appendObservation,
@@ -124,6 +124,7 @@ export function buildMemoryTools(deps: M5Deps): ToolDefinition[] {
   return [
     defineTool({
       name: "create_entity",
+      acceptsIdempotencyKey: true,
       domain: "knowledge",
       vaultArg: "vault",
       description:
@@ -135,6 +136,7 @@ export function buildMemoryTools(deps: M5Deps): ToolDefinition[] {
           name: z.string().min(1),
           observations: z.array(NormalizedObservationText).optional(),
           materialize: z.boolean().default(true),
+          idempotency_key: z.string().min(1).max(128).optional(),
         })
         .strict(),
       outputSchema: CreateEntityOutput,
@@ -186,13 +188,16 @@ export function buildMemoryTools(deps: M5Deps): ToolDefinition[] {
           throw err.invalidInput("entity already exists", { type, name });
         let e: EntityRow;
         try {
-          e = insertEntity(ctx.db, {
-            vaultId: v.id,
-            entityType: type,
-            name,
-            observations,
-            materialize: input.materialize,
-            now,
+          e = inSavepoint(ctx.db, () => {
+            ctx.markEffectCommitted?.();
+            return insertEntity(ctx.db, {
+              vaultId: v.id,
+              entityType: type,
+              name,
+              observations,
+              materialize: input.materialize,
+              now,
+            });
           });
         } catch (caught) {
           // The UNIQUE natural-key index closes the findEntity read-then-insert race (F4).
@@ -464,6 +469,7 @@ export function buildMemoryTools(deps: M5Deps): ToolDefinition[] {
 
     defineTool({
       name: "link_entities",
+      acceptsIdempotencyKey: true,
       domain: "knowledge",
       vaultArg: "vault",
       description:
@@ -474,6 +480,7 @@ export function buildMemoryTools(deps: M5Deps): ToolDefinition[] {
           source_id: z.string().min(1),
           target_id: z.string().min(1),
           relation_type: z.string().min(1),
+          idempotency_key: z.string().min(1).max(128).optional(),
         })
         .strict(),
       outputSchema: LinkEntitiesOutput,
@@ -499,7 +506,10 @@ export function buildMemoryTools(deps: M5Deps): ToolDefinition[] {
         );
         const relationType = scan.fields.relation_type as string;
         const now = (ctx.now ?? Date.now)();
-        const { existedAlready } = insertRelation(ctx.db, src.id, tgt.id, relationType, now);
+        const { existedAlready } = inSavepoint(ctx.db, () => {
+          ctx.markEffectCommitted?.();
+          return insertRelation(ctx.db, src.id, tgt.id, relationType, now);
+        });
         let sourceVaultPath: string | null;
         try {
           sourceVaultPath = rematerialize(deps, ctx, v, src, now);

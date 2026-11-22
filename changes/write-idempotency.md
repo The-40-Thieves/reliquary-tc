@@ -1,0 +1,4 @@
+---
+type: Added
+---
+- **Every write tool accepts an idempotency key.** Until now a key was honoured by some write tools and ignored by the rest, so a client that retried a timed-out call could apply it twice depending on which tool it had called. All 60 mutating tools now take `idempotency_key`: a repeat with the same key and arguments returns the first result without writing again, and the same key with different arguments is refused with `idempotency_key_mismatch`. Nine tools stay without one on purpose, each with its reason pinned in a test: the three that run an arbitrary command or template, the two pure triggers, `session_rerun`, the two that only switch what Obsidian shows, and `cancel_task`. A new tool that mutates must either take a key or join that list, or the suite fails. A write the vault's own gate refuses (a blocked convention, a secret) is not counted as applied, so the key and any confirmation token can be used again.

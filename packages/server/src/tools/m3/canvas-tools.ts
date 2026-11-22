@@ -64,6 +64,7 @@ const CreateInput = z
 const UpdateInput = z
   .object({
     vault: VaultId,
+    idempotency_key: z.string().min(1).max(128).optional(),
     path: VaultPath,
     add_nodes: NodeArray.optional(),
     add_edges: EdgeArray.optional(),
@@ -293,6 +294,7 @@ export function buildCanvasTools(deps: M3Deps): ToolDefinition[] {
 
     defineTool({
       name: "update_canvas",
+      acceptsIdempotencyKey: true,
       domain: "structured",
       vaultArg: "vault",
       pathAcl: (input) => [{ op: "write", path: input.path }],
@@ -397,6 +399,7 @@ export function buildCanvasTools(deps: M3Deps): ToolDefinition[] {
         if (!check.success)
           throw err.invalidInput("resulting canvas is invalid", { issues: check.error.issues });
         const content = serializeCanvas(parsed.raw, indent);
+        ctx.markEffectCommitted?.();
         writeNoteAtomic(abs, content, false);
         return {
           vault: v.id,

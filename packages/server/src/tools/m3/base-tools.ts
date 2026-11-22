@@ -103,6 +103,7 @@ const CreateInput = z
 const UpdateInput = z
   .object({
     vault: VaultId,
+    idempotency_key: z.string().min(1).max(128).optional(),
     path: VaultPath,
     patch: z
       .object({
@@ -283,6 +284,7 @@ export function buildBaseTools(deps: M3Deps): ToolDefinition[] {
 
     defineTool({
       name: "update_base",
+      acceptsIdempotencyKey: true,
       domain: "structured",
       vaultArg: "vault",
       pathAcl: (input) => [{ op: "write", path: input.path }],
@@ -369,6 +371,7 @@ export function buildBaseTools(deps: M3Deps): ToolDefinition[] {
         if (!check.success)
           throw err.basesSyntaxError("resulting base is invalid", { issues: check.error.issues });
         const content = serializeBase(raw);
+        ctx.markEffectCommitted?.();
         writeNoteAtomic(abs, content, false);
         return {
           vault: v.id,

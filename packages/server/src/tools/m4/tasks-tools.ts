@@ -152,6 +152,7 @@ export function buildTasksTools(deps: M4Deps): ToolDefinition[] {
 
     defineTool({
       name: "update_task",
+      acceptsIdempotencyKey: true,
       domain: "automation",
       vaultArg: "vault",
       pathAcl: (input) => [{ op: "write", path: input.path }],
@@ -162,6 +163,7 @@ export function buildTasksTools(deps: M4Deps): ToolDefinition[] {
           vault: VaultId,
           path: VaultPath,
           line: z.number().int().positive(),
+          idempotency_key: z.string().min(1).max(128).optional(),
           set: z
             .object({
               status: StatusEnum.optional(),
@@ -249,6 +251,7 @@ export function buildTasksTools(deps: M4Deps): ToolDefinition[] {
           ? { content, redactions: 0 }
           : writeNoteAtomicGuarded(abs, rel, content, true, mdConfig, {
               metrics: deps.metrics,
+              mark: ctx.markEffectCommitted,
             });
         deps.reindex?.(v.id, rel, scan.content);
         // Review finding (memoryDefense follow-up round): in "redact" mode, `updated` still

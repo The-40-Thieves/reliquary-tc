@@ -102,6 +102,7 @@ const BulkCreateInput = z
 const BulkSetPropertyInput = z
   .object({
     vault: VaultId,
+    idempotency_key: z.string().min(1).max(128).optional(),
     paths: z.array(VaultPath).min(1).max(500),
     key: z.string().min(1),
     value: z.unknown(),
@@ -307,6 +308,7 @@ export function buildBulkTools(deps: M6Deps): ToolDefinition[] {
 
     defineTool({
       name: "bulk_set_property",
+      acceptsIdempotencyKey: true,
       domain: "metadata",
       vaultArg: "vault",
       pathAcl: (input) => input.paths.map((p) => ({ op: "write" as const, path: p })),
@@ -318,6 +320,7 @@ export function buildBulkTools(deps: M6Deps): ToolDefinition[] {
       handler: async (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
         const mdConfig = deps.memoryDefense?.(v.id) ?? MEMORY_DEFENSE_OFF;
+        ctx.markEffectCommitted?.();
         const report = await runBulk(
           input.paths,
           {

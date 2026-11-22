@@ -156,6 +156,7 @@ export function buildSnapshotTools(deps: M1Deps): ToolDefinition[] {
 
     defineTool({
       name: "restore_note",
+      acceptsIdempotencyKey: true,
       domain: "notes",
       vaultArg: "vault",
       pathAcl: (input) => [{ op: "write", path: input.path }],
@@ -167,6 +168,7 @@ export function buildSnapshotTools(deps: M1Deps): ToolDefinition[] {
           path: VaultPath,
           snapshot_id: z.number().int().positive(),
           prev_hash: z.string().optional(),
+          idempotency_key: z.string().min(1).max(128).optional(),
           // THE-824: advertised so a caller can discover the HITL confirmation parameter via
           // describe_capability — stripped off rawArgs into ctx.elicitToken before this schema
           // ever validates it (mcp/server.ts), so declaring it here changes nothing about dispatch.
@@ -216,13 +218,25 @@ export function buildSnapshotTools(deps: M1Deps): ToolDefinition[] {
           path: rel,
           restored_from: input.snapshot_id,
         });
+        let captured = false;
         if (prevRaw !== null) {
           // THE-603: unlike snapshot_note's hardcoded { enabled: true, ... } above, this call
           // passes the REAL deps.snapshots config and can genuinely no-op — the tool's own
           // description already says the restore is reversible "when snapshots are enabled";
           // when they are not, this is the exact same silently-inert safety net as delete_note.
           if (!deps.snapshots?.enabled) deps.onSnapshotSkipped?.(v.id, rel, "restore_note");
-          captureSnapshot(ctx.db, deps.snapshots, v.id, rel, prevRaw, "restore_note", ctx.now);
+          captured =
+            captureSnapshot(
+              ctx.db,
+              deps.snapshots,
+              v.id,
+              rel,
+              prevRaw,
+              "restore_note",
+              ctx.now,
+              true,
+              ctx.markEffectCommitted,
+            ) !== null;
         }
         // a snapshot can predate the vault's memoryDefense config (or predate a secret
         // being pasted into an earlier version of the note) — restoring it is itself a write of
@@ -230,6 +244,7 @@ export function buildSnapshotTools(deps: M1Deps): ToolDefinition[] {
         const mdConfig = deps.memoryDefense?.(v.id) ?? MEMORY_DEFENSE_OFF;
         const scan = writeNoteAtomicGuarded(abs, rel, snap.content, true, mdConfig, {
           metrics: deps.metrics,
+          mark: captured ? undefined : ctx.markEffectCommitted,
         });
         deps.reindex?.(v.id, rel, scan.content);
         return {

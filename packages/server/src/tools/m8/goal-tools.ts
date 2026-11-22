@@ -24,6 +24,7 @@ export function buildGoalTools(deps: M8Deps): ToolDefinition[] {
     // inferred write is a constraint violation rather than a convention.
     defineTool({
       name: "set_goal",
+      acceptsIdempotencyKey: true,
       domain: "knowledge",
       description:
         "Record a STATED goal for a vault — what the user is trying to accomplish, as distinct from a learned preference (a preference is 'you tend to X' and never resolves; a goal is 'you intend to X' and ends in completed/abandoned/expired). Goals are stated by the user and never inferred: nothing in the reflect/extract path can write one. An optional target_date lets the expiry sweep mark it 'expired' rather than leaving stale intent to bias later reads.",
@@ -32,6 +33,7 @@ export function buildGoalTools(deps: M8Deps): ToolDefinition[] {
           vault: VaultId,
           text: z.string().min(1).max(2000),
           target_date: z.number().int().positive().optional(),
+          idempotency_key: z.string().min(1).max(128).optional(),
         })
         .strict(),
       vaultArg: "vault",
@@ -47,7 +49,7 @@ export function buildGoalTools(deps: M8Deps): ToolDefinition[] {
       }),
       requiredScopes: ["write:workspace"],
       tags: ["experiential"],
-      handler: (input) => {
+      handler: (input, ctx) => {
         if (!deps.edb) return UNAVAILABLE;
         const now = Date.now();
         // GH #994 review finding 7: every M5 writer resolves `input.vault` through
@@ -70,6 +72,7 @@ export function buildGoalTools(deps: M8Deps): ToolDefinition[] {
           { metrics: deps.metrics },
         );
         const text = scan.fields.text as string;
+        ctx.markEffectCommitted?.();
         const row = setGoal(deps.edb, {
           id: randomUUID(),
           vaultId,
@@ -159,6 +162,7 @@ export function buildGoalTools(deps: M8Deps): ToolDefinition[] {
 
     defineTool({
       name: "close_goal",
+      acceptsIdempotencyKey: true,
       domain: "knowledge",
       description:
         "Close a stated goal into a terminal state: completed or abandoned. Once-only — a second close reports closed:false rather than silently succeeding, and there is no reopen verb, because a system that quietly reopened a goal the user completed is exactly the low-confidence mutation this plane forbids. 'expired' is not settable here; it is the deadline sweep's verdict alone.",
@@ -167,6 +171,7 @@ export function buildGoalTools(deps: M8Deps): ToolDefinition[] {
           vault: VaultId,
           id: z.string().min(1),
           status: z.enum(["completed", "abandoned"]),
+          idempotency_key: z.string().min(1).max(128).optional(),
         })
         .strict(),
       vaultArg: "vault",
@@ -178,8 +183,9 @@ export function buildGoalTools(deps: M8Deps): ToolDefinition[] {
       }),
       requiredScopes: ["write:workspace"],
       tags: ["experiential"],
-      handler: (input) => {
+      handler: (input, ctx) => {
         if (!deps.edb) return UNAVAILABLE;
+        ctx.markEffectCommitted?.();
         const row = closeGoal(deps.edb, {
           id: input.id,
           vaultId: input.vault,

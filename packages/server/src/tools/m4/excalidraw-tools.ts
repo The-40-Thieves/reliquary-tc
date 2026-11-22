@@ -243,6 +243,7 @@ export function buildExcalidrawTools(deps: M4Deps): ToolDefinition[] {
           template: z.enum(["blank", "compressed-json", "custom"]).optional(),
           elements: ElementArray.optional(),
           overwrite: z.boolean().default(false),
+          idempotency_key: z.string().min(1).max(128).optional(),
           // THE-824: advertised so a caller can discover the HITL confirmation parameter via
           // describe_capability — stripped off rawArgs into ctx.elicitToken before this schema
           // ever validates it (mcp/server.ts), so declaring it here changes nothing about dispatch.
@@ -250,6 +251,7 @@ export function buildExcalidrawTools(deps: M4Deps): ToolDefinition[] {
         })
         .strict(),
       outputSchema: CreateExcalidrawOutput,
+      acceptsIdempotencyKey: true,
       requiredScopes: ["write:excalidraw"],
       // THE-824: display-only — see ToolDefinition.conditionallyDestructive. The real gate stays
       // the requireConfirmation call below (input.overwrite === true); this only stops the wire
@@ -304,9 +306,11 @@ export function buildExcalidrawTools(deps: M4Deps): ToolDefinition[] {
           remove_element_ids: z.array(z.string()).optional(),
           update_elements: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
           update_app_state: z.record(z.string(), z.unknown()).optional(),
+          idempotency_key: z.string().min(1).max(128).optional(),
         })
         .strict(),
       outputSchema: UpdateExcalidrawOutput,
+      acceptsIdempotencyKey: true,
       requiredScopes: ["write:excalidraw"],
       handler: async (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);

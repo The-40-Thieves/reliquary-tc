@@ -225,9 +225,11 @@ export function buildSessionTools(deps: M5Deps): ToolDefinition[] {
           vault: VaultId,
           session_id: z.string().min(1),
           end_metadata: z.record(z.string(), z.unknown()).optional(),
+          idempotency_key: z.string().min(1).max(128).optional(),
         })
         .strict(),
       outputSchema: EndSessionOutput,
+      acceptsIdempotencyKey: true,
       requiredScopes: ["write:workspace"],
       handler: (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
@@ -284,6 +286,7 @@ export function buildSessionTools(deps: M5Deps): ToolDefinition[] {
         const scannedMetadata = metaScan
           ? (metaScan.fields.end_metadata as Record<string, unknown>)
           : undefined;
+        ctx.markEffectCommitted?.();
         appendTrace(abs, {
           ts: now,
           type: "session_end",

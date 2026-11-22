@@ -28,6 +28,7 @@ import { enforcePathAcl } from "../../vault/acl-path";
 import { type Frontmatter, serializeNote } from "../../vault/frontmatter";
 import { noteExists, writeNoteAtomic } from "../../vault/notes-io";
 import { contentHash, normalizeVaultPath, resolveVaultPath } from "../../vault/paths";
+import { markBeforeNoteWrite } from "../../vault/write-gate";
 import { defineTool } from "../m1/define";
 import { getReadableCapture, listReadableCaptures } from "./capture-read-acl";
 import { type M5Deps, memoryDefenseFor } from "./shared";
@@ -306,6 +307,7 @@ export function buildCaptureTools(deps: M5Deps): ToolDefinition[] {
 
     defineTool({
       name: "commit_capture",
+      acceptsIdempotencyKey: true,
       domain: "knowledge",
       vaultArg: "vault",
       pathAcl: (input) => [{ op: "write", path: input.target_path }],
@@ -318,6 +320,7 @@ export function buildCaptureTools(deps: M5Deps): ToolDefinition[] {
           target_path: VaultPath,
           frontmatter_overrides: z.record(z.string(), z.unknown()).optional(),
           delete_from_queue: z.boolean().default(true),
+          idempotency_key: z.string().min(1).max(128).optional(),
         })
         .strict(),
       outputSchema: CommitCaptureOutput,
@@ -391,6 +394,7 @@ export function buildCaptureTools(deps: M5Deps): ToolDefinition[] {
         }
 
         // The target was checked absent above ("Refuses to overwrite"): exclusive keeps that true.
+        markBeforeNoteWrite(ctx.markEffectCommitted, abs, content);
         writeNoteAtomic(abs, content, true, { exclusive: true });
         deps.reindex?.(v.id, rel, content);
         const now = (ctx.now ?? Date.now)();

@@ -150,6 +150,7 @@ export function buildWorkspaceTools(deps: M3Deps): ToolDefinition[] {
 
     defineTool({
       name: "save_workspace",
+      acceptsIdempotencyKey: true,
       domain: "workspace",
       vaultArg: "vault",
       pathAcl: () => [{ op: "write", path: WORKSPACES_PATH }],
@@ -158,6 +159,7 @@ export function buildWorkspaceTools(deps: M3Deps): ToolDefinition[] {
       inputSchema: z
         .object({
           vault: VaultId,
+          idempotency_key: z.string().min(1).max(128).optional(),
           name: z.string().min(1),
           layout: z.record(z.string(), z.unknown()),
           set_active: z.boolean().default(false),
@@ -196,6 +198,7 @@ export function buildWorkspaceTools(deps: M3Deps): ToolDefinition[] {
 
         ws[input.name] = input.layout;
         if (input.set_active) data.active = input.name;
+        ctx.markEffectCommitted?.();
         const { hash } = writeJsonFile(abs, data, file.indent, file.trailingNewline);
         return {
           vault: v.id,

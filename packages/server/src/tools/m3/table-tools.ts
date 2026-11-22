@@ -132,7 +132,11 @@ function serializeTable(t: Table): string[] {
  *  splice it back, write. Returns the write summary. */
 function withTable(
   deps: M3Deps,
-  ctx: { acl?: import("../../acl").FolderAcl; grantedScopes: Iterable<string> },
+  ctx: {
+    acl?: import("../../acl").FolderAcl;
+    grantedScopes: Iterable<string>;
+    markEffectCommitted?: () => void;
+  },
   vault: string,
   path: string,
   index: number,
@@ -167,7 +171,10 @@ function withTable(
   // sort_table_by_column's reordering) are caller-controlled and end up in the note's final
   // persisted bytes — scan/refuse before writing, same guard every other note-content writer gets.
   const mdConfig = deps.memoryDefense?.(v.id) ?? MEMORY_DEFENSE_OFF;
-  const scan = writeNoteAtomicGuarded(abs, rel, next, false, mdConfig, { metrics: deps.metrics });
+  const scan = writeNoteAtomicGuarded(abs, rel, next, false, mdConfig, {
+    metrics: deps.metrics,
+    mark: ctx.markEffectCommitted,
+  });
   deps.reindex?.(v.id, rel, scan.content);
   return {
     vault: v.id,
@@ -188,7 +195,12 @@ function colIndex(t: Table, column: number | string): number {
   return i;
 }
 
-const Base = { vault: VaultId, path: VaultPath, table_index: z.number().int().min(0).default(0) };
+const Base = {
+  vault: VaultId,
+  path: VaultPath,
+  table_index: z.number().int().min(0).default(0),
+  idempotency_key: z.string().min(1).max(128).optional(),
+};
 
 /** THE-417 Phase 1: all four table tools return withTable()'s summary verbatim — one shared
  *  output contract, written from that helper's single return statement. */
@@ -217,9 +229,19 @@ export function buildTableTools(deps: M3Deps): ToolDefinition[] {
         "Reformat a GFM markdown table in a note: realign columns to a uniform width, honoring the delimiter row's alignment. Addressed by 0-based table_index within the note. Domain: structured.",
       inputSchema: z.object({ ...Base, prev_hash: z.string().optional() }).strict(),
       outputSchema: TableMutationOutput,
+      acceptsIdempotencyKey: true,
       requiredScopes: ["write:notes"],
-      handler: (input, ctx) =>
-        withTable(deps, ctx, input.vault, input.path, input.table_index, input.prev_hash, () => {}),
+      handler: (input, ctx) => {
+        return withTable(
+          deps,
+          ctx,
+          input.vault,
+          input.path,
+          input.table_index,
+          input.prev_hash,
+          () => {},
+        );
+      },
     }),
 
     defineTool({
@@ -238,13 +260,23 @@ export function buildTableTools(deps: M3Deps): ToolDefinition[] {
         })
         .strict(),
       outputSchema: TableMutationOutput,
+      acceptsIdempotencyKey: true,
       requiredScopes: ["write:notes"],
-      handler: (input, ctx) =>
-        withTable(deps, ctx, input.vault, input.path, input.table_index, input.prev_hash, (t) => {
-          const row = fitRow(input.values, t.header.length);
-          const at = input.at === undefined ? t.rows.length : Math.min(input.at, t.rows.length);
-          t.rows.splice(at, 0, row);
-        }),
+      handler: (input, ctx) => {
+        return withTable(
+          deps,
+          ctx,
+          input.vault,
+          input.path,
+          input.table_index,
+          input.prev_hash,
+          (t) => {
+            const row = fitRow(input.values, t.header.length);
+            const at = input.at === undefined ? t.rows.length : Math.min(input.at, t.rows.length);
+            t.rows.splice(at, 0, row);
+          },
+        );
+      },
     }),
 
     defineTool({
@@ -265,16 +297,27 @@ export function buildTableTools(deps: M3Deps): ToolDefinition[] {
         })
         .strict(),
       outputSchema: TableMutationOutput,
+      acceptsIdempotencyKey: true,
       requiredScopes: ["write:notes"],
-      handler: (input, ctx) =>
-        withTable(deps, ctx, input.vault, input.path, input.table_index, input.prev_hash, (t) => {
-          const at = input.at === undefined ? t.header.length : Math.min(input.at, t.header.length);
-          t.header.splice(at, 0, input.header);
-          t.align.splice(at, 0, input.align);
-          t.rows.forEach((r, i) => {
-            r.splice(at, 0, input.values?.[i] ?? "");
-          });
-        }),
+      handler: (input, ctx) => {
+        return withTable(
+          deps,
+          ctx,
+          input.vault,
+          input.path,
+          input.table_index,
+          input.prev_hash,
+          (t) => {
+            const at =
+              input.at === undefined ? t.header.length : Math.min(input.at, t.header.length);
+            t.header.splice(at, 0, input.header);
+            t.align.splice(at, 0, input.align);
+            t.rows.forEach((r, i) => {
+              r.splice(at, 0, input.values?.[i] ?? "");
+            });
+          },
+        );
+      },
     }),
 
     defineTool({
@@ -294,18 +337,28 @@ export function buildTableTools(deps: M3Deps): ToolDefinition[] {
         })
         .strict(),
       outputSchema: TableMutationOutput,
+      acceptsIdempotencyKey: true,
       requiredScopes: ["write:notes"],
-      handler: (input, ctx) =>
-        withTable(deps, ctx, input.vault, input.path, input.table_index, input.prev_hash, (t) => {
-          const c = colIndex(t, input.column);
-          const dir = input.order === "desc" ? -1 : 1;
-          t.rows.sort((a, b) => {
-            const av = a[c] ?? "";
-            const bv = b[c] ?? "";
-            if (input.numeric) return (Number(av) - Number(bv)) * dir;
-            return av.localeCompare(bv) * dir;
-          });
-        }),
+      handler: (input, ctx) => {
+        return withTable(
+          deps,
+          ctx,
+          input.vault,
+          input.path,
+          input.table_index,
+          input.prev_hash,
+          (t) => {
+            const c = colIndex(t, input.column);
+            const dir = input.order === "desc" ? -1 : 1;
+            t.rows.sort((a, b) => {
+              const av = a[c] ?? "";
+              const bv = b[c] ?? "";
+              if (input.numeric) return (Number(av) - Number(bv)) * dir;
+              return av.localeCompare(bv) * dir;
+            });
+          },
+        );
+      },
     }),
   ];
 }
