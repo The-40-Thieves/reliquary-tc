@@ -186,6 +186,7 @@ export async function runWikiLint(
   const warnings = new ScanWarnings();
   const scope: ScanScope = {
     root: env.root,
+    vaultId: input.vaultId,
     acl: env.acl,
     grantedScopes: env.grantedScopes,
     wikiFolder: env.wikiFolder,
@@ -453,10 +454,7 @@ export async function runWikiLint(
   });
 
   await run("missing_sources", async () => {
-    const scan = await drainYielding(
-      scanProvenanceSteps(scope, warnings, { field: "sources", folder }),
-      signal,
-    );
+    const scan = await drainYielding(scanProvenanceSteps(scope, warnings, { folder }), signal);
     push(
       "missing_sources",
       scan.missing.filter(subjectOk).map((p) => ({

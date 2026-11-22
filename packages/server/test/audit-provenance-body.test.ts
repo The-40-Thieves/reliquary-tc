@@ -102,10 +102,11 @@ describe("audit_provenance: body citations", () => {
     expect(d.missing).toEqual([]);
   });
 
-  it("a `source:` key is not a sources field, and a body citation still counts", async () => {
-    const d = await audit({
-      "alias.md": `${fm("source: https://example.com") + NL}Claim.`,
-    });
+  it("a `source:` key is not the sources field when the caller names `sources`", async () => {
+    const d = await audit(
+      { "alias.md": `${fm("source: https://example.com") + NL}Claim.` },
+      { field: "sources" },
+    );
     expect(d.with_provenance).toBe(0);
     expect(d.body_only).toEqual([]);
     expect(d.missing).toEqual(["alias.md"]);
