@@ -405,28 +405,6 @@ mod safe_io {
         }
     }
 
-    #[cfg(test)]
-    mod read_error_tests {
-        use super::*;
-
-        #[test]
-        fn classifies_read_open_errors() {
-            for e in [Errno::LOOP, Errno::NOTDIR, Errno::NOENT] {
-                assert_eq!(read_open_error(e, "refused".into()).reason, "refused");
-            }
-            for (e, name) in [
-                (Errno::ACCESS, "EACCES"),
-                (Errno::IO, "EIO"),
-                (Errno::MFILE, "EMFILE"),
-            ] {
-                assert_eq!(
-                    read_open_error(e, "refused".into()).reason,
-                    format!("io:{name}:")
-                );
-            }
-        }
-    }
-
     /// Non-empty path components; reject `.` (skip), `..` (traversal), empty.
     fn components(abs: &str) -> Result<Vec<&str>, Error> {
         let mut out = Vec::new();
@@ -718,6 +696,28 @@ mod safe_io {
             return Err(rename_error(e));
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod read_error_tests {
+        use super::*;
+
+        #[test]
+        fn classifies_read_open_errors() {
+            for e in [Errno::LOOP, Errno::NOTDIR, Errno::NOENT] {
+                assert_eq!(read_open_error(e, "refused".into()).reason, "refused");
+            }
+            for (e, name) in [
+                (Errno::ACCESS, "EACCES"),
+                (Errno::IO, "EIO"),
+                (Errno::MFILE, "EMFILE"),
+            ] {
+                assert_eq!(
+                    read_open_error(e, "refused".into()).reason,
+                    format!("io:{name}:")
+                );
+            }
+        }
     }
 }
 
