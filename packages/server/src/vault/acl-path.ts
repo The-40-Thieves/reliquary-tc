@@ -16,7 +16,7 @@ import { CASE_INSENSITIVE_FS, type FolderAcl, foldPath, isDefaultDenied } from "
 // path gets redacted, rather than a second copy that could drift.
 import { redactSecrets } from "../util/redact";
 import { recordAclCheck } from "./acl-audit";
-import { isHardLinkedFile } from "./hard-link";
+import { hardLinkReason } from "./hard-link";
 import { assertWritableVaultPath, normalizeVaultPath, resolveVaultPathChecked } from "./paths";
 
 export type AclOp = "read" | "write" | "delete";
@@ -233,11 +233,14 @@ export function enforcePathAcl(
   // with no ACL, outside the vault) would otherwise pass as the name it was given.
   // The fd-based readers (notes-io) reject nlink>1 on read; this additionally covers delete/move,
   // which do not read through readNote. Fail closed; a not-yet-created write path has no stat.
-  if (isHardLinkedFile(resolved.abs))
-    throw err.aclDenied("refusing a hard-linked file (inode aliasing)", {
-      path: redactedPath,
-      op,
-    });
+  const linkReason = hardLinkReason(resolved.abs);
+  if (linkReason)
+    throw err.aclDenied(
+      linkReason === "hard_link"
+        ? "refusing a hard-linked file (inode aliasing)"
+        : "refusing a file whose link count cannot be read",
+      { path: redactedPath, op, reason: linkReason },
+    );
 }
 
 /**
