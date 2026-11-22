@@ -1,6 +1,7 @@
 import { chmodSync, linkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readIoError } from "../src/vault/native-read-error";
 import { makeM2Vault } from "./m2-helpers";
 import { makeM3Vault } from "./m3-helpers";
 import { makeTempDir, rmTemp } from "./tmp";
@@ -52,11 +53,13 @@ describe.skipIf(skipChmod)("read I/O faults", () => {
       const path = join(v.root, "n/a.md");
       try {
         chmodSync(path, 0);
-        const result = await v.call("index_vault", { vault: v.id });
+        const result = await v.call("index_vault", { vault: v.id, response_format: "detailed" });
         expect(result).toMatchObject({
           ok: true,
           data: { notes_read_failed: 1, notes_read_refused: 0 },
         });
+        // The count is reported; the paths are not, since no caller check covers them.
+        expect(JSON.stringify(result)).not.toContain("read_failures");
       } finally {
         chmodSync(path, 0o600);
         v.cleanup();
@@ -78,5 +81,14 @@ describe.skipIf(process.platform === "win32")("hard links", () => {
       v.cleanup();
       rmTemp(outside);
     }
+  });
+});
+
+describe("native fault marker", () => {
+  it("reports an errno the platform has no name for as UNKNOWN", () => {
+    expect(readIoError(new Error("io:#99999: read"), "/v/n/a.md")).toMatchObject({
+      code: "internal_error",
+      details: { errno: "UNKNOWN" },
+    });
   });
 });
