@@ -369,6 +369,7 @@ const EXPECTED: ToolSnapshot[] = [
     inputKeys: [
       "allow_duplicate",
       "elicit_token",
+      "idempotency_key",
       "judge",
       "page",
       "patches",
