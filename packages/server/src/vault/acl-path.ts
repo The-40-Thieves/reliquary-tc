@@ -1,4 +1,3 @@
-import { statSync } from "node:fs";
 import { err, grantsAll } from "@the-40-thieves/reliquary-tc-shared";
 // Per-path ACL enforcement — activates the dormant M0 FolderAcl seam.
 // Every path-based tool calls this with the operation kind and the resolved
