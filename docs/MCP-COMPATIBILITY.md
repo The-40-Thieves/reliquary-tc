@@ -127,7 +127,7 @@ This server attaches the structured error object as `structuredContent` alongsid
 (the SEP-1303 row above). That is deliberate, documented, and asserted by
 `tool-surface-2025.test.ts`. **A strict client may nonetheless replace our error with its own.**
 
-The TypeScript SDK client this repo's tests use — `@modelcontextprotocol/sdk` **1.32.1**, the
+The TypeScript SDK client this repo's tests use — `@modelcontextprotocol/sdk` **1.32.2**, the
 version `bun.lock` resolves (a dev dependency; `docgen:facts-check` pins this number) — is
 believed to implement the `isError` exemption on only one of the two paths in
 `dist/esm/client/index.js`:
