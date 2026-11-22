@@ -8,6 +8,10 @@ import { cachedPrepare, type Database } from "../../db/types";
 import { blobToFloats, upsertVec } from "../vec";
 import type { DedupCache, DedupSource } from "./types";
 
+export function dedupKey(bodySha: string, contentHash: string): string {
+  return `${bodySha}:${contentHash}`;
+}
+
 // THE-454: copy an identical EMBED TEXT's already-stored vectors onto a cross-path-dedup (skipEmbed)
 // chunk so it stays retrievable by dense/sparse/ColBERT, not just FTS. The source is another chunk
 // (c.id != target) with the same embed representation + model. It MUST match on content_hash (the
@@ -20,9 +24,9 @@ import type { DedupCache, DedupSource } from "./types";
 // the chunk degrades to FTS-only, no worse than before. Requires the body_sha column (guaranteed:
 // skipEmbed is only set when it exists, see computeNotePlan dedupEnabled).
 
-// THE-488: fetch the owner chunk's stored vectors for a content_hash — one embedding SELECT plus, when
+// THE-488: fetch the owner chunk's stored vectors — one embedding SELECT plus, when
 // the columns exist, one sparse and one colbert SELECT. Memoized by copyDedupVectors so this runs once
-// per DISTINCT content_hash per flush, not once per deduped chunk.
+// per pair of body and embedding hashes per flush.
 function fetchDedupSource(
   db: Database,
   args: { vaultId: string; bodySha: string; contentHash: string; model: string; targetId: string },
@@ -75,13 +79,12 @@ export function copyDedupVectors(
   },
   cache: DedupCache,
 ): { resolved: boolean } {
-  // THE-488: memoize the owner's vectors by content_hash for this flush. The source is the same owner
-  // chunk for every duplicate of a content_hash, so the JOINs run once per distinct content_hash, not
-  // once per deduped chunk (a hot repeated JOIN inside the write txn on template-heavy vaults).
-  let src = cache.get(args.contentHash);
+  // THE-488: reuse the lookup for chunks that share an owner in this flush.
+  const key = dedupKey(args.bodySha, args.contentHash);
+  let src = cache.get(key);
   if (src === undefined) {
     src = fetchDedupSource(db, args, args.hasChunkSparse, args.hasChunkColbert);
-    cache.set(args.contentHash, src);
+    cache.set(key, src);
   }
   // THE-588: no stored embedding to copy — chunk degrades to FTS-only (unchanged behaviour). The
   // caller counts this as an UNRESOLVED dedup skip, distinct from the reused-work counter.

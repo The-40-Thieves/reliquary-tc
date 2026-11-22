@@ -1,6 +1,7 @@
 import type { ToolResult } from "@the-40-thieves/reliquary-tc-shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Database } from "../src/db/types";
+import { fakeEmbeddingProvider } from "../src/embeddings";
 import { ensureChunkFts } from "../src/search/chunk_fts";
 import { ensureNotesFts } from "../src/search/fts";
 import { indexNote, indexVault } from "../src/search/indexer";
@@ -67,6 +68,48 @@ describe("index_vault (incremental chunk + embed)", () => {
     const third = data(await v.call("index_vault", { vault: "test" }));
     expect(third.chunks_upserted).toBe(1);
     v.cleanup();
+  });
+
+  it("re-embeds just the first chunk when a summary is added, edited, or removed", async () => {
+    const body = "# Setup\n\nfirst body\n\n# Details\n\nsecond body";
+    const provider = fakeEmbeddingProvider({ dimensions: 32 });
+    const embed = vi.spyOn(provider, "embed");
+    const v = makeM2Vault({ files: { "a.md": body }, provider });
+    onTestFinished(v.cleanup);
+    const reconcile = async () => data(await v.call("index_vault", { vault: "test" }));
+    const hashes = () => v.db.prepare("SELECT content_hash FROM chunks ORDER BY chunk_index").all();
+
+    expect((await reconcile()).chunks_upserted).toBe(2);
+    const initial = hashes();
+    expect(embed.mock.lastCall?.[0]).toEqual(["first body", "second body"]);
+    for (const summary of ["Initial summary.", "Revised summary.", ""]) {
+      const before = hashes();
+      embed.mockClear();
+      v.write("a.md", summary ? `---\nsummary: ${summary}\n---\n${body}` : body);
+      expect((await reconcile()).chunks_upserted).toBe(1);
+      expect(embed.mock.calls.map(([texts]) => texts)).toEqual([
+        [summary ? `Summary: ${summary}\n\nfirst body` : "first body"],
+      ]);
+      expect(hashes()[0]).not.toEqual(before[0]);
+      expect(hashes()[1]).toEqual(initial[1]);
+    }
+    expect(hashes()).toEqual(initial);
+    expect((await reconcile()).chunks_unchanged).toBe(2);
+    expect(embed).toHaveBeenCalledTimes(1);
+  });
+
+  it("embeds chunks that share input text with differently shaped stored bodies", async () => {
+    const v = makeM2Vault({ files: { "plain.md": "Summary: Shared overview.\n\nbody" } });
+    onTestFinished(v.cleanup);
+    expect(data(await v.call("index_vault", { vault: "test" })).chunks_upserted).toBe(1);
+
+    v.write("prefixed.md", "---\nsummary: Shared overview.\n---\nbody");
+    expect(data(await v.call("index_vault", { vault: "test" })).chunks_upserted).toBe(1);
+    const rows = v.db
+      .prepare("SELECT content_hash FROM chunks JOIN chunk_embeddings ON chunks.id = chunk_id")
+      .all();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual(rows[1]);
   });
 
   it("prunes chunks that no longer exist after a note shrinks", async () => {

@@ -5,7 +5,7 @@
 // the enriched text but bm25Chunks returns the RAW content (chunks JOIN).
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { runMigrations } from "../src/db/migrate";
 import type { Database } from "../src/db/types";
 import type { EmbeddingProvider } from "../src/embeddings";
@@ -119,5 +119,77 @@ describe("THE-406 contextual chunk enrichment", () => {
     const hits = bm25Chunks(db, "v1", "vault health", 10);
     expect(hits).toHaveLength(1);
     expect(hits[0]?.content).toBe("run the reconcile nightly");
+  });
+});
+
+describe("frontmatter summaries in single-note embeddings", () => {
+  it.each([
+    { enrich: false, first: "run the reconcile nightly", second: "read the logs" },
+    {
+      enrich: true,
+      first: "Vault Health — Setup\n\nrun the reconcile nightly",
+      second: "Vault Health — Verification\n\nread the logs",
+    },
+  ])(
+    "prepends a trimmed summary to just the first chunk (context=$enrich)",
+    async ({ enrich, first, second }) => {
+      const db = baseDb();
+      onTestFinished(() => db.close?.());
+      const seen: string[] = [];
+      const raw = `---\nsummary: "  Nightly maintenance steps.  "\n---\n${RAW}\n\n# Verification\n\nread the logs`;
+      await indexNote(
+        db,
+        capturingProvider(seen),
+        "v1",
+        PATH,
+        raw,
+        false,
+        () => 1,
+        undefined,
+        enrich,
+      );
+      expect(seen).toEqual([`Summary: Nightly maintenance steps.\n\n${first}`, second]);
+      expect(db.prepare("SELECT content FROM chunks ORDER BY chunk_index").all()).toEqual([
+        { content: "run the reconcile nightly" },
+        { content: "read the logs" },
+      ]);
+    },
+  );
+
+  it.each(["tags: [ops]", 'summary: "  "', "summary: [ops]"])(
+    "keeps the old embedding input with %s",
+    async (yaml) => {
+      const db = baseDb();
+      onTestFinished(() => db.close?.());
+      const seen: string[] = [];
+      await indexNote(
+        db,
+        capturingProvider(seen),
+        "v1",
+        PATH,
+        `---\n${yaml}\n---\n${RAW}`,
+        false,
+        () => 1,
+      );
+      expect(seen).toEqual(["run the reconcile nightly"]);
+    },
+  );
+
+  it("embeds a summary when there is no body text", async () => {
+    const db = baseDb();
+    onTestFinished(() => db.close?.());
+    const seen: string[] = [];
+    const raw = "---\nsummary: Planned maintenance.\n---\n# Setup\n";
+    await indexNote(db, capturingProvider(seen), "v1", PATH, raw, false, () => 1);
+    expect(seen).toEqual(["Summary: Planned maintenance."]);
+  });
+
+  it("withholds a summary flagged by the embedding secret scan", async () => {
+    const db = baseDb();
+    onTestFinished(() => db.close?.());
+    const seen: string[] = [];
+    const raw = `---\nsummary: AKIA0000000000000000\n---\n${RAW}`;
+    await indexNote(db, capturingProvider(seen), "v1", PATH, raw, false, () => 1);
+    expect(seen).toEqual(["run the reconcile nightly"]);
   });
 });

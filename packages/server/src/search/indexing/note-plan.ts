@@ -4,10 +4,11 @@
 // provider-call phase) and indexer.ts (persistence + orchestration) both depend on this file;
 // this file must depend on neither of them.
 import type { Database } from "../../db/types";
-import { parseNote } from "../../vault/frontmatter";
+import { type ParsedNote, parseNote } from "../../vault/frontmatter";
 import { contentHash } from "../../vault/paths";
 import { chunkNote, enrichChunkText } from "../chunk";
 import { scanSecrets } from "../secrets";
+import { dedupKey } from "./dedup";
 import type { ExistingRow, PlannedChunk, PlanResult } from "./types";
 import { readFenceGeneration } from "./write-fence";
 
@@ -159,14 +160,8 @@ export function computeNotePlan(
   raw: string,
   ts: number,
   enrich: boolean,
-  /** Cross-path embedding dedup (migration 20260719_001): a per-RUN registry of content_hash -> the
-   *  first walked path producing that EMBED text. Keying on content_hash (not the raw body_sha) is
-   *  what makes dedup safe under contextual enrichment (THE-406): content_hash covers the title +
-   *  breadcrumb + body actually embedded, so two identical bodies under DIFFERENT titles no longer
-   *  collide and no longer share a (wrongly-titled) vector; with enrichment off it equals the raw-body
-   *  hash, so cross-path dedup of identical bodies is unchanged. Purely in-memory, so it works even on
-   *  a cache.db that predates the body_sha column. Callers on the batched indexVault path share ONE
-   *  map across the whole walk; single-note paths pass a fresh (effectively empty) map. */
+  /** Cross-path embedding dedup: the first walked path for each pair of raw body and embedding
+   *  hashes, matching the persisted vector lookup. The batched vault path shares one map per walk. */
   dedupRegistry: Map<string, string> = new Map(),
   /** THE-454: enable cross-path embedding dedup only when applyNoteWrites can later COPY the
    *  sibling's stored vector to a skipEmbed chunk — i.e. when the body_sha column exists. Without
@@ -191,37 +186,31 @@ export function computeNotePlan(
    *  forces a re-plan on a status change (see the toEmbed filter below), so a rename into or out
    *  of an excluded folder lands on the next pass even when content_hash is unchanged. */
   isExcluded?: (rel: string) => boolean,
-  precomputedBody?: string,
+  precomputedNote?: ParsedNote,
   preloadedFenceGenerations?: Map<string, number>,
 ): PlanResult {
   // THE-823: `path` is already this function's own parameter — pass it through so a malformed note
   // reached via computeNotePlan (rather than index-vault.ts's earlier parseNote call) still names
   // itself.
-  const body = precomputedBody ?? parseNote(raw, path).body;
+  const { body, frontmatter } = precomputedNote ?? parseNote(raw, path);
+  const summary = typeof frontmatter?.summary === "string" ? frontmatter.summary.trim() : "";
+  const summaryPrefix = summary && scanSecrets(summary).clean ? `Summary: ${summary}` : "";
   // Secret-gate (THE-134 fold): a chunk whose content matches a credential shape is dropped
   // before embedding — never embedded, never stored, pruned if it existed. Class names only
   // are logged; the matched value is never logged or thrown.
   let secretsSkipped = 0;
   const flagged: string[] = [];
-  // THE-406: with enrichment on, the content hash is computed over the ENRICHED text, so flipping
-  // embeddings.chunkContext re-embeds every chunk on the next pass instead of silently serving
-  // vectors built from a different representation.
-  const desired = chunkNote(body, chunkTokens !== undefined ? { maxTokens: chunkTokens } : {})
-    .map((c): PlannedChunk => {
-      // body_sha keys on the RAW body (c.content), PRE-enrichment — it must NOT depend on the
-      // path-salted embed text, so identical bodies at different paths collide (migration
-      // 20260719_001).
-      const bodySha = contentHash(c.content);
-      if (!enrich) return { ...c, id: chunkId(vaultId, path, c.index), bodySha };
-      const embedText = enrichChunkText(path, c.headings, c.content);
-      return {
-        ...c,
-        id: chunkId(vaultId, path, c.index),
-        embedText,
-        contentHash: contentHash(embedText),
-        bodySha,
-      };
-    })
+  const chunks = chunkNote(body, chunkTokens !== undefined ? { maxTokens: chunkTokens } : {});
+  if (chunks.length === 0 && summaryPrefix) {
+    chunks.push({
+      index: "0",
+      headings: [],
+      content: "",
+      contentHash: contentHash(""),
+      tokenCount: 0,
+    });
+  }
+  const desired = chunks
     .filter((c) => {
       const scan = scanSecrets(c.content);
       if (scan.clean) return true;
@@ -231,6 +220,21 @@ export function computeNotePlan(
         `[ingest] secret-gate skipped ${path}#${c.index} (${scan.classes.join(", ")})\n`,
       );
       return false;
+    })
+    .map((c, i): PlannedChunk => {
+      const ftsText = enrich ? enrichChunkText(path, c.headings, c.content) : undefined;
+      const embedText =
+        i === 0 && summaryPrefix
+          ? `${summaryPrefix}\n\n${ftsText ?? c.content}`.trimEnd()
+          : ftsText;
+      return {
+        ...c,
+        id: chunkId(vaultId, path, c.index),
+        embedText,
+        ftsText,
+        contentHash: embedText === undefined ? c.contentHash : contentHash(embedText),
+        bodySha: c.contentHash,
+      };
     });
   const desiredIds = new Set(desired.map((d) => d.id));
   // THE-531: LEFT JOIN the active embedding so we know each chunk's stored model, not just its
@@ -256,9 +260,9 @@ export function computeNotePlan(
   if (excludedNow) for (const d of toEmbed) d.excludedFromEmbed = true;
   const unchanged = desired.length - toEmbed.length;
   const willPrune = existing.some((e) => !desiredIds.has(e.id));
-  // Cross-path embedding dedup (migration 20260719_001). Register EVERY desired chunk's raw-body
-  // hash (changed or not) so a later path dedups against a body already indexed here — first walked
-  // path wins. Then flag any TO-EMBED chunk whose body was first seen at a DIFFERENT path: it is
+  // Cross-path embedding dedup (migration 20260719_001). Register EVERY desired chunk (changed or
+  // not) so a later path dedups against a match already indexed here — first walked path wins.
+  // Then flag any TO-EMBED chunk whose hashes were first seen at a DIFFERENT path: it is
   // still STORED at this path (applyNoteWrites writes the chunk row), but its embedding is
   // reused/skipped — embedPlans never sends it to the provider and applyNoteWrites writes no
   // embedding row for it. Same-path repeats keep firstPath === path and are never skipped (an index
@@ -270,12 +274,13 @@ export function computeNotePlan(
   if (dedupEnabled) {
     const debug = process.env.RELIQUARY_TC_DEBUG_DEDUP !== undefined;
     for (const d of desired) {
-      if (!dedupRegistry.has(d.contentHash)) dedupRegistry.set(d.contentHash, path);
+      const key = dedupKey(d.bodySha, d.contentHash);
+      if (!dedupRegistry.has(key)) dedupRegistry.set(key, path);
     }
     for (const d of toEmbed) {
       // THE-934: never dedup-copy a vector onto an excluded chunk — that would defeat the exclusion.
       if (d.excludedFromEmbed) continue;
-      const firstPath = dedupRegistry.get(d.contentHash);
+      const firstPath = dedupRegistry.get(dedupKey(d.bodySha, d.contentHash));
       if (firstPath !== undefined && firstPath !== path) {
         d.skipEmbed = true;
         dedupSkipped += 1;

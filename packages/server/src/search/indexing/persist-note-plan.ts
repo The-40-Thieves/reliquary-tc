@@ -204,8 +204,8 @@ export function applyNoteWrites(
       );
       if (!resolved) dedupUnresolved += 1;
     }
-    // THE-406: BM25 matches on the same text the dense vector embeds (enriched when the flag is
-    // on); bm25Chunks JOINs chunks for the raw display content, so search output is unchanged.
+    // THE-406: BM25 uses the body and optional title/heading context, which chunk_fts can rebuild
+    // from the stored chunk. bm25Chunks JOINs chunks for the raw display content.
     //
     // THE-711 follow-up: the rowid is READ BACK rather than taken from the upsert. `upChunk` is an
     // ON CONFLICT DO UPDATE, so this is an insert on a new chunk and an update on an existing one,
@@ -214,7 +214,7 @@ export function applyNoteWrites(
     // KEY, so this is an index seek.
     if (hasChunkFts) {
       const rid = rowidOf.get(d.id) as { rowid: number } | undefined;
-      if (rid) upsertChunkFtsRow(db, rid.rowid, d.embedText ?? d.content);
+      if (rid) upsertChunkFtsRow(db, rid.rowid, d.ftsText ?? d.content);
     }
     // THE-395: an empty head (the serving runtime could not produce it) is skipped, not stored —
     // an all-empty chunk_sparse / chunk_colbert would only bloat scans with dead rows.

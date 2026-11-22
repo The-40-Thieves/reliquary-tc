@@ -87,15 +87,16 @@ export interface ExistingRow {
   embedding_excluded?: number;
 }
 
-// A note's chunk after secret-gating, carrying its stable chunk id. embedText (THE-406) is the
-// context-enriched text that is embedded + BM25-indexed INSTEAD of content when
-// embeddings.chunkContext is on; content stays the raw display text everywhere.
+// A note's chunk after secret-gating, carrying its stable chunk id. embedText can include the
+// note summary and contextual enrichment. ftsText carries only the context-enriched body so it
+// can be rebuilt from stored chunks. content stays the raw display text everywhere.
 // bodySha is contentHash() over the RAW body (c.content, PRE-enrichment) — the cross-path
 // dedup key; skipEmbed marks a chunk whose identical body was already embedded at another path
 // this run, so it is STORED but its embedding is reused/skipped (migration 20260719_001).
 export type PlannedChunk = ReturnType<typeof chunkNote>[number] & {
   id: string;
   embedText?: string;
+  ftsText?: string;
   bodySha: string;
   skipEmbed?: boolean;
   /** THE-934: this chunk's NOTE is under an egress.excludePaths glob (set once per note by

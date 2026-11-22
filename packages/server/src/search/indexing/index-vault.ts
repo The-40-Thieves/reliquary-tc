@@ -44,6 +44,7 @@ import { resolveRetrievalDefaults } from "../retrieval-defaults";
 import { ensureChunkSparse } from "../sparse";
 import { ensureVecChunks } from "../vec";
 import { promoteReadIdentity, walkIdentityDemotingChanged } from "./acl-path-sync";
+import { dedupKey } from "./dedup";
 import {
   EMBED_BATCH,
   EMBED_CONCURRENCY,
@@ -121,10 +122,8 @@ export async function indexVault(args: IndexVaultArgs): Promise<IndexStats> {
   const changedChunkPaths = new Set<string>();
   const deletedPaths = new Set<string>();
   const isIndexExcluded = args.isIndexExcluded ?? (() => false);
-  // Cross-path embedding dedup (migration 20260719_001): ONE registry shared across the whole walk,
-  // so an EMBED text produced under the first walked path is reused/skipped everywhere else this pass.
-  // Keyed on content_hash (the enriched embed text under THE-406), not the raw body_sha, so distinctly
-  // titled notes never share a vector. Purely in-memory — works even when the body_sha column is absent.
+  // Cross-path embedding dedup shares one registry across the walk, keyed the same way as the
+  // persisted vector lookup so identical embed text from different raw bodies is safe to index.
   const dedupRegistry = new Map<string, string>();
   // THE-445: seed the registry from embed texts already embedded in a PRIOR run, so content indexed
   // under an UNCHANGED path (never re-walked this pass) still dedups against a new path carrying the
@@ -133,12 +132,13 @@ export async function indexVault(args: IndexVaultArgs): Promise<IndexStats> {
   if (hasBodySha) {
     const seeded = args.db
       .prepare(
-        "SELECT content_hash AS contentHash, path FROM chunks WHERE vault_id = ? ORDER BY path, chunk_index",
+        "SELECT body_sha AS bodySha, content_hash AS contentHash, path FROM chunks WHERE vault_id = ? AND body_sha IS NOT NULL ORDER BY path, chunk_index",
       )
-      .all(args.vaultId) as Array<{ contentHash: string; path: string }>;
+      .all(args.vaultId) as Array<{ bodySha: string; contentHash: string; path: string }>;
     for (const row of seeded) {
       if (isIndexExcluded(row.path)) continue;
-      if (!dedupRegistry.has(row.contentHash)) dedupRegistry.set(row.contentHash, row.path);
+      const key = dedupKey(row.bodySha, row.contentHash);
+      if (!dedupRegistry.has(key)) dedupRegistry.set(key, row.path);
     }
   }
   const yieldToLoop = createSliceYielder(args.signal); // boot reconcile only: lets SIGTERM/tools/call in
@@ -466,7 +466,7 @@ export async function indexVault(args: IndexVaultArgs): Promise<IndexStats> {
       preloadedExisting, // THE-501: plan from the bulk chunk-state load, no per-note query
       args.chunkTokens, // THE-424: indexing.chunkTokens; undefined -> the chunker's 512 default
       args.isEgressExcluded, // THE-934: egress.excludePaths; undefined -> nothing excluded
-      parsed.body, // THE-1073: reuse the probe-parse above; this note already parsed successfully
+      parsed, // THE-1073: reuse the probe-parse above; this note already parsed successfully
       preloadedFenceGenerations, // GH #995 follow-up: bulk fence-state load, no per-note query
     );
     stats.chunks_unchanged += unchanged;
