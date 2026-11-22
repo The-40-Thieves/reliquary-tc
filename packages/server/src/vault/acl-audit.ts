@@ -1,5 +1,5 @@
 // THE-414 follow-up (issue #280): an opt-in, dev/test-only audit that verifies a tool's declared
-// `pathAcl` extractor actually MIRRORS the vault paths its handler resolves for filesystem ops.
+// `pathAcl` extractor mirrors the vault paths and operations its handler uses.
 //
 // `acl-extraction-coverage.test.ts` proves every mutating path tool DECLARES a pathAcl (or is a
 // documented exemption). This catches the next bug class: a declared extractor that returns the
@@ -9,17 +9,24 @@
 //   - "strict":   additionally throw the moment an uncovered fs-op path is resolved.
 //
 // Mechanism: runDispatch wraps the central pathAcl stage + the handler in an AsyncLocalStorage
-// frame. enforcePathAcl records each path it checks; resolveVaultPath (the sole fs-op path wrapper)
-// reports each path a handler resolves. A path resolved for an fs op but never ACL-checked in the
+// frame. enforcePathAcl records each operation and path it checks; resolveVaultPath
+// reports each path a handler resolves, and filesystem primitives report destructive operations.
+// A path resolved for an fs op but never ACL-checked in the
 // same dispatch is a violation. The central stage records BEFORE the handler runs, so ordering
 // inside the handler does not matter. Every entry point is a no-op when disabled, so production
 // carries zero overhead beyond one boolean check.
 import { AsyncLocalStorage } from "node:async_hooks";
 
+// acl-path.ts's AclOp, spelled out because that module imports this one. A caller passes its own
+// AclOp, so the two cannot drift apart without a compile error.
+type AclOp = "read" | "write" | "delete";
+
 export interface AclAuditViolation {
   tool: string;
   /** aclRel resolved for a filesystem op that no folder-ACL check covered in this dispatch. */
   path: string;
+  op?: AclOp;
+  checkedOps?: AclOp[];
 }
 
 interface AuditFrame {
@@ -27,7 +34,8 @@ interface AuditFrame {
   /** When false, uncovered fs-op path uses are not flagged: for tools that intentionally touch
    *  dynamic paths beyond their static pathAcl (cross-note backlink / reference rewrites). */
   auditUses: boolean;
-  checked: Set<string>;
+  checked: Map<string, Set<AclOp>>;
+  paths: Map<string, string>;
 }
 
 /** Tools that declare a pathAcl for their primary paths but intentionally resolve ADDITIONAL,
@@ -83,21 +91,46 @@ const als = new AsyncLocalStorage<AuditFrame>();
 /** Run `fn` inside a fresh audit frame. A transparent passthrough when the audit is disabled. */
 export function runAudited<T>(opts: { tool: string; auditUses: boolean }, fn: () => T): T {
   if (!_enabled) return fn();
-  return als.run({ tool: opts.tool, auditUses: opts.auditUses, checked: new Set() }, fn);
+  return als.run(
+    { tool: opts.tool, auditUses: opts.auditUses, checked: new Map(), paths: new Map() },
+    fn,
+  );
 }
 
 /** Record that `aclRel` passed a folder-ACL check (called from enforcePathAcl on success). */
-export function recordAclCheck(aclRel: string): void {
+export function recordAclCheck(op: AclOp, aclRel: string, abs: string): void {
   if (!_enabled) return;
-  als.getStore()?.checked.add(aclRel);
+  const frame = als.getStore();
+  if (!frame) return;
+  const ops = frame.checked.get(aclRel) ?? new Set<AclOp>();
+  ops.add(op);
+  frame.checked.set(aclRel, ops);
+  frame.paths.set(abs, aclRel);
+}
+
+export function recordPathOp(op: AclOp, abs: string): void {
+  if (!_enabled) return;
+  const frame = als.getStore();
+  const path = frame?.paths.get(abs);
+  if (!frame || path === undefined) return;
+  const checkedOps = [...(frame.checked.get(path) ?? [])];
+  if (checkedOps.includes(op)) return;
+  // Secondary backlink and reference rewrites intentionally touch runtime-discovered paths.
+  if (op === "write" && checkedOps.length === 0 && CROSS_NOTE_REWRITE_TOOLS.has(frame.tool)) return;
+  _collected.push({ tool: frame.tool, path, op, checkedOps });
+  if (_strict)
+    throw new Error(
+      `ACL audit: ${frame.tool} performed ${op} on "${path}" without its folder-ACL check`,
+    );
 }
 
 /** Record that `aclRel` was resolved for a filesystem op (called from resolveVaultPath). Flags a
  *  violation when the current tool audits uses and no ACL check covered this path; throws in strict
  *  mode so the offending call fails loudly. */
-export function recordPathUse(aclRel: string): void {
+export function recordPathUse(aclRel: string, abs?: string): void {
   if (!_enabled) return;
   const frame = als.getStore();
+  if (frame && abs !== undefined) frame.paths.set(abs, aclRel);
   if (!frame?.auditUses) return;
   if (frame.checked.has(aclRel)) return;
   _collected.push({ tool: frame.tool, path: aclRel });

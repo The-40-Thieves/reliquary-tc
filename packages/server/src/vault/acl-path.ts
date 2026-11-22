@@ -227,7 +227,7 @@ export function enforcePathAcl(
   }
   // THE-414 / #280: this path passed its folder-ACL check; record it for the (default-off) ACL
   // audit so a handler that later resolves an UNdeclared path for an fs op is caught in dev/test.
-  recordAclCheck(path);
+  recordAclCheck(op, path, resolved.abs);
   // Inode-aliasing guard (C-1b): reject a hard-linked regular file, with or without an ACL.
   // realpath cannot dereference a hard link, so an aliased target outside the allowed set (or,
   // with no ACL, outside the vault) would otherwise pass as the name it was given.

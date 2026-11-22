@@ -33,6 +33,7 @@ import { existsNoFollow } from "../auth/key-files";
 import type { MetricsRecorder } from "../metrics/registry";
 import { enforceMemoryDefenseOnNoteWrite } from "../util/memory-defense";
 import { redactSecrets } from "../util/redact";
+import { recordPathOp } from "./acl-audit";
 import { vaultDetailPath } from "./folder-links";
 import {
   type NativeVaultIo,
@@ -50,6 +51,7 @@ import {
 } from "./no-follow-walk";
 import { assertCreatableName, contentHash } from "./paths";
 import { O_NOFOLLOW, removeTemp, writeAll, writeTempFile } from "./temp-write";
+import { splitTrashName } from "./trash-name";
 import { gateNoteWrite, preflightNoteWrite } from "./write-gate";
 
 // O_NOFOLLOW and O_NONBLOCK are POSIX-only (undefined on Windows Node): 0 is a no-op there, and the
@@ -389,6 +391,7 @@ export function writeFileAtomic(
   createDirs = true,
   opts: WriteFileOpts = {},
 ): void {
+  recordPathOp("write", abs);
   if (!opts.ungated) gateNoteWrite(abs, data);
   // Backstop for writers that skipped enforcePathAcl("write"): creating a Windows-hostile leaf name
   // is refused here too (an existing file stays updatable in place).
@@ -462,6 +465,7 @@ export function stageNoteWrite(
   let settled = false;
   return {
     commit() {
+      recordPathOp("write", abs);
       if (settled) throw new Error("staged write already settled");
       settled = true;
       try {
@@ -486,6 +490,8 @@ export function stageNoteWrite(
  * target throws note_exists. The primitive behind trashNote and its rollback.
  */
 export function moveNoReplace(fromAbs: string, toAbs: string): void {
+  recordPathOp("delete", fromAbs);
+  recordPathOp("write", toAbs);
   if (nativeIo?.safeRenameNoReplace) {
     try {
       const from = nativeOpen(fromAbs);
@@ -621,15 +627,6 @@ export function statNote(abs: string): NoteStat | null {
   }
 }
 
-/** Stem and extension of a vault path: trashNote inserts ` (n)` between them on a collision. */
-function splitTrashName(relPath: string): { stem: string; ext: string } {
-  const dot = relPath.lastIndexOf(".");
-  const slash = relPath.lastIndexOf("/");
-  return dot > slash
-    ? { stem: relPath.slice(0, dot), ext: relPath.slice(dot) }
-    : { stem: relPath, ext: "" };
-}
-
 /**
  * Soft-delete: move a note into the vault's `.trash/` mirror (Obsidian trash). Returns the
  * vault-relative trash path. A name collision gets a ` (n)` suffix, chosen by the no-replace move
@@ -733,6 +730,7 @@ export function replaceDestination<T = void>(args: {
  * primitive a path through a pinned folder is refused (vault/native-io.ts).
  */
 export function hardDelete(abs: string): void {
+  recordPathOp("delete", abs);
   if (nativeIo?.safeUnlink) {
     const { path, pinned } = nativeOpen(abs);
     try {
