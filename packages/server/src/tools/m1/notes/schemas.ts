@@ -520,6 +520,8 @@ export const DeleteInput = z
     path: VaultPath,
     permanent: z.boolean().default(false),
     prev_hash: z.string().optional(),
+    // A retry with the same key is served the first call's result and deletes nothing more.
+    idempotency_key: z.string().min(1).max(128).optional(),
   })
   .strict();
 

@@ -138,6 +138,25 @@ describe("bookmarks and workspaces: a non-reader gets the fixed refusal and no a
     );
     expect(r.ok).toBe(true);
   });
+
+  it("open_workspace gives one refusal for an existing and a missing name, and writes nothing", async () => {
+    m3 = makeM3Vault({ files, acl: WRITE_ONLY_ACL });
+    const open = (name: string) => m3?.call("open_workspace", { vault: "test", name }, WRITER);
+    const [hit, miss] = [await open("secret-ws"), await open("no-such-ws")];
+    const whole = [hit, miss].map((r) => JSON.stringify(r?.ok ? r : r?.error));
+    expect(errOf(hit as ToolResult)?.message).toBe(FIXED_REFUSAL);
+    // The whole error, code and details included, is the same for both names.
+    expect(whole[0]).toBe(whole[1]);
+    expect(whole[0]).not.toMatch(/4821|layout|active|content_hash|not found/);
+    expect(m3.read(".obsidian/workspaces.json")).toBe(WORKSPACES);
+  });
+
+  it("a reader still opens a workspace and gets its layout", async () => {
+    m3 = makeM3Vault({ files, acl: READER_ACL });
+    const r = await m3.call("open_workspace", { vault: "test", name: "secret-ws" }, READER);
+    expect(r.ok).toBe(true);
+    expect(JSON.stringify(r)).toContain("4821");
+  });
 });
 
 describe("append_to_periodic_note with a heading: a non-reader is refused identically", () => {

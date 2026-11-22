@@ -95,9 +95,9 @@ export function authAudienceCheck(view: AuthAudienceView): Check {
         status: "warning",
         summary:
           "auth: a JWKS key source with no effective audience (deprecated; a startup error in the next minor release)",
-        issues: [jwksWithoutAudienceMessage(view.auth)],
+        issues: [jwksWithoutAudienceMessage()],
         remediation:
-          "Set auth.audience to this server's resource identifier (or give auth.resource together with auth.authorizationServers). auth.allowMissingAudience: true opts out if tokens minted for other services really should be accepted.",
+          "Set auth.audience (or auth.resource) to this server's resource identifier. auth.allowMissingAudience: true opts out if tokens minted for other services really should be accepted.",
       };
     },
   };

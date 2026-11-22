@@ -74,9 +74,9 @@ function authorizationServersOf(auth: PrmFields): string[] {
 }
 
 /**
- * The audience every bearer check binds: an explicit `auth.audience`, else the PRM `resource` when
- * a complete PRM is configured, else undefined (not checked). ONE definition, shared by the MCP
- * HTTP edge and the `/metrics` scrape so the two cannot disagree about which tokens they accept.
+ * The audience every bearer check binds: an explicit `auth.audience`, else `resource` when a
+ * complete PRM is configured or a JWKS verifies the tokens, else undefined (not checked). ONE
+ * definition, shared by the MCP HTTP edge and the `/metrics` scrape so the two cannot disagree.
  *
  * This is the single source for "was this token issued for this server". The SDK 2.3
  * `expectedResource` option of `requireBearerAuth` / `verifyBearerToken` is deliberately NOT
@@ -95,7 +95,12 @@ export function effectiveAudience(
   // discovery, and binding the audience on its account would turn every hand-minted token without an
   // `aud` into a 401 the moment `auth.as` is enabled (design v2 section 7). Tokens the AS issues are
   // checked against `auth.resource` by their own, stricter rules in the verifier.
-  return auth.audience ?? (isPrmConfigured({ ...auth, as: undefined }) ? auth.resource : undefined);
+  if (auth.audience !== undefined) return auth.audience;
+  if (isPrmConfigured({ ...auth, as: undefined })) return auth.resource;
+  // A JWKS issuer may serve other services, so `resource` alone binds; a shared secret is our own.
+  const a: AudienceFields = auth;
+  const jwks = !!(a.jwks || a.jwksFile || a.jwksUri);
+  return jwks && a.allowMissingAudience !== true ? auth.resource : undefined;
 }
 
 /**
@@ -117,9 +122,8 @@ export function verifierAudience(auth: AudienceFields | AuthConfig): string | st
  * True when `auth.mode: jwt` verifies tokens against a JWKS (inline, file or URI) but binds NO
  * audience, and the operator has not opted out with `auth.allowMissingAudience`: a token the same
  * issuer minted for another service is then accepted here (confused deputy). The schema requires
- * `audience` or `resource` with a JWKS, but `resource` binds only with a complete PRM
- * (`isPrmConfigured`), so a `resource`-only config lands here. ONE definition for the startup line,
- * `doctor` and server_health.
+ * `audience` or `resource` with a JWKS and both bind, so only an auth object built by hand lands
+ * here. ONE definition for the startup line, `doctor` and server_health.
  */
 export function jwksWithoutAudience(auth: AudienceFields): boolean {
   return (
@@ -131,13 +135,10 @@ export function jwksWithoutAudience(auth: AudienceFields): boolean {
 }
 
 /** The deprecation text for `jwksWithoutAudience`: what is wrong, the fix, the opt-out, the deadline. */
-export function jwksWithoutAudienceMessage(auth: Pick<AuthConfig, "resource">): string {
-  const resourceNote = auth.resource
-    ? ` auth.resource is set but is used as the audience only when Protected Resource Metadata is complete (auth.authorizationServers too), so it binds nothing here.`
-    : "";
+export function jwksWithoutAudienceMessage(): string {
   return (
-    `auth.mode 'jwt' verifies tokens against a JWKS but no audience is enforced, so a token the same issuer minted for ANOTHER service is accepted (confused deputy).${resourceNote} ` +
-    `Set auth.audience to this server's resource identifier. This becomes a startup error in the next minor release; ` +
+    `auth.mode 'jwt' verifies tokens against a JWKS but no audience is enforced, so a token the same issuer minted for ANOTHER service is accepted (confused deputy). ` +
+    `Set auth.audience (or auth.resource) to this server's resource identifier. This becomes a startup error in the next minor release; ` +
     `auth.allowMissingAudience: true opts out (and stops this warning).`
   );
 }

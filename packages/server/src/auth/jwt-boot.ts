@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { ServerConfig } from "@the-40-thieves/reliquary-tc-shared";
+import { cachedPrepare, type Database } from "../db/types";
 import { enabledAs } from "./as-metadata";
 import {
   jwksWithoutAudience,
@@ -13,7 +14,7 @@ import { createTokenVerifier, type TokenVerifier } from "./verifier";
  *  that builds no verifier (stdio only), which would otherwise never say it. */
 export function warnJwksWithoutAudience(auth: ServerConfig["auth"]): void {
   if (jwksWithoutAudience(auth)) {
-    process.stderr.write(`auth: DEPRECATED: ${jwksWithoutAudienceMessage(auth)}\n`);
+    process.stderr.write(`auth: DEPRECATED: ${jwksWithoutAudienceMessage()}\n`);
   }
 }
 
@@ -30,6 +31,7 @@ export function warnJwksWithoutAudience(auth: ServerConfig["auth"]): void {
 export function buildJwtVerifier(
   auth: ServerConfig["auth"],
   registry?: AuthRegistry,
+  oauthDb?: Database,
 ): TokenVerifier | null {
   if (auth.mode !== "jwt") return null;
   const jwks =
@@ -38,11 +40,10 @@ export function buildJwtVerifier(
       ? (JSON.parse(readFileSync(auth.jwksFile, "utf8")) as Record<string, unknown>)
       : undefined);
   // THE-456: bind the token audience. An explicit auth.audience wins; otherwise, when PRM is
-  // configured, default it to the canonical `resource` URI (RFC 9728 / MCP 2025-11-25 require a
-  // protected resource to accept only tokens whose aud is itself). Undefined keeps the legacy
-  // behavior for local self-issued HS256. A JWKS (shared external issuer, `jwksUri` included) with
-  // no effective audience is the confused-deputy hole: it still works this release, as a
-  // deprecation (also in `doctor` and server_health) unless the operator opted out.
+  // configured or a JWKS verifies the tokens, default it to the canonical `resource` URI (RFC 9728
+  // / MCP 2025-11-25 require a protected resource to accept only tokens whose aud is itself).
+  // Undefined keeps the legacy behavior for local self-issued HS256, and for a JWKS whose operator
+  // set `allowMissingAudience`.
   const audience = verifierAudience(auth);
   warnJwksWithoutAudience(auth);
   // A remote key set (`jwksUri`) is a key source on its own: leaving it out returned no verifier for
@@ -57,6 +58,10 @@ export function buildJwtVerifier(
     audience,
     issuer: auth.issuer,
     registry,
+    pendingRevocation: oauthDb
+      ? (jti) =>
+          Boolean(cachedPrepare(oauthDb, "SELECT 1 FROM revocation_outbox WHERE jti = ?").get(jti))
+      : undefined,
     requireJti: auth.requireJti,
     // A token signed by an `as`-purpose registry key is verified only when the bundled authorization
     // server is enabled: its issuer comes from `auth.as`, the audience from `auth.resource`. With the

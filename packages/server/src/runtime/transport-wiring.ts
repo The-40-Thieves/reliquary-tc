@@ -220,8 +220,8 @@ export async function wireTransports(deps: TransportWiringDeps): Promise<Transpo
     }
     // ONE bearer verifier for every listener that checks bearers. oidc: discover the identity
     // provider NOW (a failure throws, naming the issuer, and the server does not start). jwt: build
-    // it from config (secret, inline/file/URI JWKS, registry keys). The MCP edge and /metrics are
-    // handed this same instance, so they cannot disagree about which tokens are accepted.
+    // it from config (secret, inline/file/URI JWKS, registry keys) plus oauth.db's revocation outbox.
+    // The MCP edge and /metrics get this same instance, so they accept exactly the same tokens.
     let oidcVerifier: OidcVerifier | undefined;
     if (
       config.auth.mode === "oidc" &&
@@ -235,7 +235,9 @@ export async function wireTransports(deps: TransportWiringDeps): Promise<Transpo
       config.transports.http.enabled || config.observability.prometheus.enabled;
     const verifier: TokenVerifier | undefined =
       oidcVerifier ??
-      (listensForBearers ? (buildJwtVerifier(config.auth, authRegistry) ?? undefined) : undefined);
+      (listensForBearers
+        ? (buildJwtVerifier(config.auth, authRegistry, oauthDb?.db) ?? undefined)
+        : undefined);
     // buildJwtVerifier says it when it runs; a stdio-only boot never builds one, but the config is
     // the same and the operator should hear it.
     if (!listensForBearers) warnJwksWithoutAudience(config.auth);

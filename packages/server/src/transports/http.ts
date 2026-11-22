@@ -522,7 +522,7 @@ export function createHttpApp(opts: HttpAppOptions): HttpApp {
   // construction from `buildJwtVerifier`, so there is a single recipe either way. null in "none"
   // mode or jwt-without-key-source.
   const verifier: TokenVerifier | null =
-    opts.verifier ?? buildJwtVerifier(opts.auth, opts.authRegistry);
+    opts.verifier ?? buildJwtVerifier(opts.auth, opts.authRegistry, opts.oauthDb);
 
   // MCP 2025-11-25 / RFC 9728 Protected Resource Metadata (THE-278). Public, non-secret discovery,
   // served only when the operator configured a resource URI + authorization server(s). The document

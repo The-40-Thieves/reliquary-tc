@@ -11,9 +11,11 @@
 // callers that have not been made cooperative.
 
 import type { FolderAcl } from "../acl";
-import { globPredicate } from "../acl";
+import { foldPath, globPredicate } from "../acl";
+import { resolvePeriodicConfig } from "../formats/periodic";
 import { drainSteps, type ScanSteps } from "../util/scan-steps";
 import { readableEntry } from "../vault/acl-read-filter";
+import { classificationFold } from "../vault/case-sensitivity";
 import { fmHas } from "../vault/frontmatter";
 import {
   buildVaultIndex,
@@ -21,7 +23,7 @@ import {
   normalizeLinkTarget,
   resolveTarget,
 } from "../vault/links";
-import { walkVaultSteps } from "../vault/paths";
+import { normalizeVaultPath, walkVaultSteps } from "../vault/paths";
 import { matchHeadingBoundary } from "./m1/notes/heading-syntax";
 import { isGeneratedWikiPath, rawPathFilter } from "./m7/knowledge/wiki-folder";
 import { isGeneratedPage } from "./m7/knowledge/wiki-generated-seal";
@@ -316,6 +318,16 @@ function typeMatches(fm: Record<string, unknown> | null, types: ReadonlySet<stri
   return Array.isArray(t) && t.some((x) => typeof x === "string" && types.has(x));
 }
 
+/** The vault's configured daily-notes folder as a folded `folder/` prefix, or "" when none is set. */
+function dailyFolderPrefix(root: string, fold: ReturnType<typeof classificationFold>): string {
+  try {
+    const folder = normalizeVaultPath(resolvePeriodicConfig(root, "daily").config.folder);
+    return folder ? `${foldPath(folder, fold)}/` : "";
+  } catch {
+    return "";
+  }
+}
+
 /** Claim-bearing notes that lack the `field` frontmatter key, plus coverage of
  *  sources/confidence/verified over the readable set. The include/exclude globs are compiled ONCE
  *  for the whole scan (THE-618): an over-long glob fails up front as `glob too long`, and not
@@ -326,10 +338,13 @@ export function* scanProvenanceSteps(
   warnings: ScanWarnings,
   opts: ProvenanceScanOpts,
 ): ScanSteps<ProvenanceScan> {
+  const fold = classificationFold(scope.caseInsensitive);
+  const dailyPrefix = dailyFolderPrefix(scope.root, fold);
   const exclude = [...PROVENANCE_DEFAULT_EXCLUDE, ...(opts.exclude ?? [])];
   const includeMatch = (opts.include ?? []).map((g) => globPredicate(g));
   const excludeMatch = exclude.map((g) => globPredicate(g));
   const inScope = (rel: string): boolean => {
+    if (dailyPrefix && foldPath(rel, fold).startsWith(dailyPrefix)) return false;
     if (includeMatch.length && !includeMatch.some((m) => m(rel))) return false;
     return !excludeMatch.some((m) => m(rel));
   };

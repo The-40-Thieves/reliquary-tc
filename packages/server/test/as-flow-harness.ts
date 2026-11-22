@@ -14,6 +14,7 @@ import { mountAsOperator } from "../src/auth/as-operator";
 import { claimOperator } from "../src/auth/as-operator-store";
 import { hashPassword } from "../src/auth/as-password";
 import "../src/auth/as-issuing";
+import { buildJwtVerifier } from "../src/auth/jwt-boot";
 import { type AuthRegistry, authKeysDir, createAuthRegistry } from "../src/auth/registry";
 import { generateSigningKey } from "../src/auth/signing-keys";
 import { provisionAuthDb, provisionCacheDb, provisionOauthDb } from "../src/db/provision";
@@ -194,6 +195,7 @@ export async function makeFlow(
       auth,
       db: cacheDb,
       authRegistry: registry,
+      verifier: buildJwtVerifier(auth, registry, db) ?? undefined,
       vaultId: opts.defaultVault ?? vaultDefs[0]?.id ?? "v1",
       acl: new FolderAcl({ readOnly: false, defaultScopes: [], rules: [] }),
       enableDnsRebindingProtection: false,

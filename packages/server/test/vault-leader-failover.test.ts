@@ -33,6 +33,11 @@ const DIST_CLI = join(SERVER_DIR, "dist", "cli.js");
 // incremental walk would then skip on) before the other even starts.
 const NOTE_COUNT = 20;
 const BUSY_MS = 150;
+/** How long the failover test waits for the follower to promote: past the 5-15s retry window,
+ *  and past a Windows runner stall. */
+const PROMOTE_WAIT_MS = stallTimeout(20_000);
+/** Everything the failover test does before that wait: three boots and the leader's embed. */
+const SETUP_BUDGET_MS = 60_000;
 
 /** TEST_FALSE_ASSURANCE (fix round): the newest mtime under `dir` (recursive). This file's
  *  `beforeAll` used to build dist ONLY when it was entirely absent — a stale dist built before a
@@ -286,7 +291,8 @@ describe.each(["node", "bun"] as const)(
         );
         // vault-lock.ts's default follower retry window is 5-15s (jittered, unref'd) — bounded
         // wait past the worst case.
-        const deadline = Date.now() + stallTimeout(20_000);
+        const waitStart = Date.now();
+        const deadline = waitStart + PROMOTE_WAIT_MS;
         let promoted = false;
         while (Date.now() < deadline) {
           await sleep(500);
@@ -296,9 +302,17 @@ describe.each(["node", "bun"] as const)(
             break;
           }
         }
-        expect(promoted).toBe(true);
+        const follower = leaderChild === a.child ? b.child : a.child;
+        expect(
+          promoted,
+          `no embed from the follower (pid ${follower.pid}, exit ${follower.exitCode}, signal ${follower.signalCode}) ` +
+            `${Date.now() - waitStart}ms after killing leader ${leaderPid}; ` +
+            `pids in the embed log: ${[...distinctPids(logPath)].join(", ")}`,
+        ).toBe(true);
       },
-      60_000,
+      // Setup (three boots and the leader's embed) plus the whole promotion wait, so a follower
+      // that never promotes fails on the assertion above and not on a bare vitest timeout.
+      SETUP_BUDGET_MS + PROMOTE_WAIT_MS,
     );
   },
 );

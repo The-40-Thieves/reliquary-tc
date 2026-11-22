@@ -41,7 +41,7 @@ assumptions:
   combines byte-level traversal rejection (absolute paths and `..` segments) with a real-path
   check that canonicalizes the vault root and the deepest existing target segment through
   symlinks — so an in-vault symlink (or a symlinked ancestor) pointing outside the vault root is
-  rejected, not just lexical `..`. Under a folder ACL, reads and writes also reject a **hard-linked**
+  rejected, not just lexical `..`. Reads, writes, deletes and moves also reject a **hard-linked**
   regular file (`st_nlink > 1`): a hard link aliases an inode that realpath cannot dereference, so it
   could otherwise serve a file outside the allowed folder. Reads run on the opened fd (fstat and read
   on the same object), and the atomic write opens its temp file `O_EXCL | O_NOFOLLOW` on a random
@@ -320,7 +320,6 @@ Known residuals, accepted for now:
 - Append acknowledgements omit the whole-note byte count for non-readers. Content-dependent patch, tag,
   frontmatter and table writes require read access; append scans only the non-reader's input. Other
   size and count fields across mutating tools have not received a comprehensive behavioral audit.
-- `open_workspace` answers differently for a workspace name that exists and one that does not.
 - Batch-commit drift errors withhold `expected` and `actual` from every caller, readers included.
 - In `block` mode, an append by a write-only caller is judged on its own bytes only. A secret that the existing
   bytes and the appended text form together across the join is not caught, and in `redact` mode the existing
@@ -937,12 +936,11 @@ token (`idp_unavailable` in the auth log); there is no fallback to another key s
 `reliquary-tc doctor` (`auth.jwks-uri`) say which mode is active.
 
 **JWKS without an audience**: a JWKS key source (`jwks`, `jwksFile`, `jwksUri`) that binds no audience accepts a
-token its issuer minted for another service (confused deputy). The schema requires `audience` or `resource`,
-but `resource` is used as the audience only when Protected Resource Metadata is complete
-(`authorizationServers` set too), so a `resource`-only config bound nothing and logged only a stderr line (none for
-`jwksUri`). That is now a deprecation at startup, in `doctor` (`auth.jwks-audience`, a warning with the fix) and
-in `server_health`, and becomes a startup error in the next minor release; `auth.allowMissingAudience: true` is the
-explicit opt-out. A configured audience is enforced exactly as before.
+token its issuer minted for another service (confused deputy). The schema requires `audience` or `resource`
+with a JWKS, and the verifier enforces whichever is set: `audience` when given, otherwise `resource`, with or
+without `authorizationServers`. `auth.allowMissingAudience: true` is the explicit opt-out: `resource` is then
+enforced only when `authorizationServers` is set too. An auth object built without the schema, with a JWKS and
+neither value, still gets a deprecation at startup, in `doctor` (`auth.jwks-audience`) and in `server_health`.
 
 Accepted residuals, in addition to the one below: the OIDC address check decodes the well-known NAT64
 prefix `64:ff9b::/96` and the 6to4 and Teredo embeddings, but not an operator-specific NAT64 prefix (RFC 6052
@@ -1011,9 +1009,8 @@ so operators can reason about them rather than discover them.
   batch is abandoned, the plan is rebuilt and re-proved ONCE, and a second change refuses with
   `concurrent_modification` and nothing moved. A new unrepresentable backlink fails the re-proof the
   same way an old one does. In `bulk_move_notes` a real run refuses the whole batch when any source cannot
-  be read (a hard-linked source included), before anything moves; a dry run whose source fails the read ACL is refused as a whole call (`acl_denied`), as a real run is;
-  only a source that is unreadable with no folder ACL in play (a hard-linked file) is reported on its own
-  row by a dry run. A row refused by a `block`-mode scan, whose destination cannot be moved aside, or whose destination
+  be read (a hard-linked source included), before anything moves; a dry run whose source fails the read ACL is refused as a whole call (`acl_denied`), as a real run is,
+  with or without a folder ACL. A row refused by a `block`-mode scan, whose destination cannot be moved aside, or whose destination
   appeared after validation fails alone and the rest are planned again without it. Snapshots are dropped after a clean rollback and kept when the rollback was
   incomplete (`rollback_incomplete`: restore those notes with `restore_note`).
   A source edited after the final recheck is therefore kept and the batch rolled back (the move is

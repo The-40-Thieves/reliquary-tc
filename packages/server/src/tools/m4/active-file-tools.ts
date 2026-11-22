@@ -282,7 +282,8 @@ export function buildActiveFileTools(deps: M4Deps, lookup: DelegateLookup): Tool
       vaultArg: "vault",
       description:
         "Delete the note currently open in the live Obsidian session (delete_note, aimed at the active note): to the vault's .trash mirror, or permanently. Destructive: requires human confirmation bound to the resolved note, so a confirmation raised while one note was active cannot be redeemed once another is. restore_note reads its undo from a snapshot when snapshots are enabled. Refuses a non-markdown active file.",
-      inputSchema: DeleteInput.omit({ path: true }),
+      // No key here: this tool is not part of the idempotency surface (delete_note is).
+      inputSchema: DeleteInput.omit({ path: true, idempotency_key: true }),
       outputSchema: DeleteNoteOutput,
       requiredScopes: ["delete:notes"],
       tags: ["plugin-bridge"],
