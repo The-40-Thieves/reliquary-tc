@@ -2,9 +2,14 @@
 // The walk lists a note under its symlink-resolved identity; the read goes through the safe open,
 // which refuses an unconfigured symlinked folder (`wiki -> pages`) and a hard-linked file that
 // gained its second link after the walk's stat. Only that refusal is caught here: every other error
-// (ENOENT for a note deleted mid-pass, I/O, a non-regular file) propagates unchanged.
-import { sep } from "node:path";
+// (ENOENT for a note deleted mid-pass, a non-regular file) propagates unchanged, except an I/O fault
+// on the read (EACCES, EIO, EMFILE ...): one unreadable file must not abort the pass, so it is
+// skipped and counted on its own, apart from the refusals.
+
+import { join, sep } from "node:path";
+import { ReliquaryTcError } from "@the-40-thieves/reliquary-tc-shared";
 import type { AclPath } from "../../vault/acl-identity";
+import { readIoError } from "../../vault/native-read-error";
 import { readNoteOrRefusal } from "../../vault/read-refusal";
 import { ACL_PATH_UNRESOLVED } from "../../vault/stored-acl-path";
 import { syncAclPaths } from "./acl-path-sync";
@@ -18,7 +23,24 @@ export function readOrRecordRefusal(
   readableWalked: Set<string>,
   rel: string,
 ): string | null {
-  const read = readNoteOrRefusal(args.root, rel);
+  let read: ReturnType<typeof readNoteOrRefusal>;
+  try {
+    read = readNoteOrRefusal(args.root, rel);
+  } catch (error) {
+    const e = readIoError(error, join(args.root, rel));
+    if (
+      !(e instanceof ReliquaryTcError) ||
+      e.code !== "internal_error" ||
+      typeof e.details?.errno !== "string"
+    )
+      throw e;
+    stats.notes_read_failed = (stats.notes_read_failed ?? 0) + 1;
+    stats.read_failures = [...(stats.read_failures ?? []), { path: rel, error: e.details.errno }];
+    walkedSet.set(rel, ACL_PATH_UNRESOLVED);
+    readableWalked.delete(rel);
+    syncAclPaths(args.db, args.vaultId, new Map([[rel, ACL_PATH_UNRESOLVED]]), args.sql);
+    return null;
+  }
   if ("refused" in read) {
     recordReadRefusal(args, stats, walkedSet, readableWalked, rel, read.refused);
     return null;

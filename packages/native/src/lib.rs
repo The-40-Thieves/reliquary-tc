@@ -368,6 +368,65 @@ mod safe_io {
         Error::from_reason(msg.into())
     }
 
+    fn read_fault(code: i32) -> Error {
+        let errno = Errno::from_raw_os_error(code);
+        let name = match errno {
+            Errno::ACCESS => "EACCES",
+            Errno::PERM => "EPERM",
+            Errno::IO => "EIO",
+            Errno::MFILE => "EMFILE",
+            Errno::NFILE => "ENFILE",
+            Errno::NOMEM => "ENOMEM",
+            _ => return denied(format!("io:#{code}:")),
+        };
+        denied(format!("io:{name}:"))
+    }
+
+    fn read_open_error(e: Errno, policy: String) -> Error {
+        match e {
+            Errno::LOOP | Errno::NOTDIR | Errno::NOENT => denied(policy),
+            _ => read_fault(e.raw_os_error()),
+        }
+    }
+
+    fn parent_open_error(e: Errno, read: bool, message: String) -> Error {
+        if read {
+            read_open_error(e, message)
+        } else {
+            denied(message)
+        }
+    }
+
+    fn root_open_error(e: Errno, read: bool) -> Error {
+        if read {
+            read_fault(e.raw_os_error())
+        } else {
+            denied(format!("open root: {e}"))
+        }
+    }
+
+    #[cfg(test)]
+    mod read_error_tests {
+        use super::*;
+
+        #[test]
+        fn classifies_read_open_errors() {
+            for e in [Errno::LOOP, Errno::NOTDIR, Errno::NOENT] {
+                assert_eq!(read_open_error(e, "refused".into()).reason, "refused");
+            }
+            for (e, name) in [
+                (Errno::ACCESS, "EACCES"),
+                (Errno::IO, "EIO"),
+                (Errno::MFILE, "EMFILE"),
+            ] {
+                assert_eq!(
+                    read_open_error(e, "refused".into()).reason,
+                    format!("io:{name}:")
+                );
+            }
+        }
+    }
+
     /// Non-empty path components; reject `.` (skip), `..` (traversal), empty.
     fn components(abs: &str) -> Result<Vec<&str>, Error> {
         let mut out = Vec::new();
@@ -404,9 +463,15 @@ mod safe_io {
     }
 
     /// fstat the opened directory: refuse it unless it is still the directory that was pinned.
-    fn still_pinned(dir: OwnedFd, pin: &Pin) -> Result<OwnedFd, Error> {
+    fn still_pinned(dir: OwnedFd, pin: &Pin, read: bool) -> Result<OwnedFd, Error> {
         let file = std::fs::File::from(dir);
-        let meta = file.metadata().map_err(|e| denied(format!("fstat: {e}")))?;
+        let meta = file.metadata().map_err(|e| {
+            if read {
+                read_fault(e.raw_os_error().unwrap_or(0))
+            } else {
+                denied(format!("fstat: {e}"))
+            }
+        })?;
         if meta.dev() != pin.dev || meta.ino() != pin.ino {
             return Err(denied(
                 "refusing a pinned folder that is no longer the directory it was pinned as",
@@ -419,13 +484,18 @@ mod safe_io {
     /// component fails (ELOOP) rather than redirecting resolution. With `pin`, the component that
     /// completes the pinned directory is checked against its identity right after it is opened.
     fn open_parent(comps: &[&str], pin: Option<&Pin>) -> Result<OwnedFd, Error> {
-        open_parent_with(comps, pin, false)
+        open_parent_with(comps, pin, false, false)
     }
 
     /// `open_parent`, and with `create` each missing folder BELOW the pin is made with `mkdirat` on the
     /// verified parent fd. The component that completes the pinned folder is identity-checked before
     /// anything beneath it is created; the pinned folder itself is never created.
-    fn open_parent_with(comps: &[&str], pin: Option<&Pin>, create: bool) -> Result<OwnedFd, Error> {
+    fn open_parent_with(
+        comps: &[&str],
+        pin: Option<&Pin>,
+        create: bool,
+        read: bool,
+    ) -> Result<OwnedFd, Error> {
         let depth = pin.map(|p| pinned_depth(comps, p)).transpose()?;
         let mut dir = openat(
             CWD,
@@ -433,7 +503,7 @@ mod safe_io {
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
             Mode::empty(),
         )
-        .map_err(|e| denied(format!("open root: {e}")))?;
+        .map_err(|e| root_open_error(e, read))?;
         for (i, comp) in comps[..comps.len() - 1].iter().enumerate() {
             let open_comp = |dir: &OwnedFd| {
                 openat(
@@ -454,15 +524,17 @@ mod safe_io {
                 }
                 other => other,
             };
-            dir = opened.map_err(|_| {
-                denied(format!(
-                    "refusing symlinked or missing path component: {comp:?}"
-                ))
+            dir = opened.map_err(|e| {
+                parent_open_error(
+                    e,
+                    read,
+                    format!("refusing symlinked or missing path component: {comp:?}"),
+                )
             })?;
             if let (Some(d), Some(p)) = (depth, pin)
                 && d == i + 1
             {
-                dir = still_pinned(dir, p)?;
+                dir = still_pinned(dir, p, read)?;
             }
         }
         Ok(dir)
@@ -470,7 +542,7 @@ mod safe_io {
 
     pub fn read(abs: &str, pin: Option<&Pin>) -> Result<Buffer, Error> {
         let comps = components(abs)?;
-        let parent = open_parent(&comps, pin)?;
+        let parent = open_parent_with(&comps, pin, false, true)?;
         let leaf = comps[comps.len() - 1];
         let fd = openat(
             &parent,
@@ -480,9 +552,11 @@ mod safe_io {
             OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
             Mode::empty(),
         )
-        .map_err(|_| denied("refusing symlinked or missing file"))?;
+        .map_err(|e| read_open_error(e, "refusing symlinked or missing file".into()))?;
         let mut file = std::fs::File::from(fd);
-        let meta = file.metadata().map_err(|e| denied(format!("fstat: {e}")))?;
+        let meta = file
+            .metadata()
+            .map_err(|e| read_fault(e.raw_os_error().unwrap_or(0)))?;
         if !meta.is_file() {
             return Err(denied("not a regular file"));
         }
@@ -491,7 +565,7 @@ mod safe_io {
         }
         let mut buf = Vec::with_capacity(meta.len() as usize);
         file.read_to_end(&mut buf)
-            .map_err(|e| denied(format!("read: {e}")))?;
+            .map_err(|e| read_fault(e.raw_os_error().unwrap_or(0)))?;
         Ok(buf.into())
     }
 
@@ -612,7 +686,7 @@ mod safe_io {
         create_dirs: bool,
     ) -> Result<(), Error> {
         let comps = components(abs)?;
-        let parent = open_parent_with(&comps, pin, create_dirs)?;
+        let parent = open_parent_with(&comps, pin, create_dirs, false)?;
         let leaf = comps[comps.len() - 1];
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

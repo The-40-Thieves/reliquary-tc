@@ -43,6 +43,7 @@ import {
   probePath,
   refuseJsThroughPin,
 } from "./native-io";
+import { readIo, readIoError } from "./native-read-error";
 import {
   assertPinnedFolderNames,
   verifyWalkedDirectories,
@@ -71,8 +72,7 @@ const fallbackReadRefused = (message: string, abs: string): ReliquaryTcError =>
   err.aclDenied(`safe open refused the path: ${message}`, { path: vaultDetailPath(abs) });
 
 function openRegularRead(abs: string): { fd: number; stat: BigIntStats } {
-  // O_NONBLOCK prevents a swapped FIFO from hanging open; Linux/macOS ignore it for regular-file
-  // reads, so it does not need to be cleared after fstat.
+  // O_NONBLOCK stops a swapped FIFO hanging the open; regular-file reads ignore it, so it stays set.
   const fd = openSync(abs, constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
   try {
     const stat = fstatSync(fd, { bigint: true });
@@ -115,6 +115,7 @@ function relativeEnoent(e: unknown, detail: string, abs: string): unknown {
 
 /** Classify a native refusal without following any component while deciding ENOENT vs refusal. */
 function mapNativeReadError(e: unknown, abs: string): never {
+  if ((e as Error)?.message?.startsWith("io:")) throw readIoError(e, abs);
   // Classify the path the native open actually walked: under a configured pinned folder that is
   // the real directory, not the alias spelling, so a missing note there stays ENOENT.
   const path = normalize(nativeOpen(abs).path);
@@ -236,10 +237,10 @@ export function readNote(abs: string): { raw: string; hash: string } {
       mapNativeReadError(e, abs);
     }
   }
-  const fd = fallbackOpen(abs);
+  const fd = readIo(() => fallbackOpen(abs), abs);
   try {
-    assertRegularSingleLink(fd, abs);
-    const raw = readFileSync(fd, "utf8");
+    readIo(() => assertRegularSingleLink(fd, abs), abs);
+    const raw = readIo(() => readFileSync(fd, "utf8"), abs);
     return { raw, hash: contentHash(raw) };
   } finally {
     closeSync(fd);
@@ -256,13 +257,13 @@ export function readNoteBounded(abs: string, maxBytes: number): { raw: string | 
       mapNativeReadError(e, abs);
     }
   }
-  const fd = fallbackOpen(abs);
+  const fd = readIo(() => fallbackOpen(abs), abs);
   try {
-    assertRegularSingleLink(fd, abs);
+    readIo(() => assertRegularSingleLink(fd, abs), abs);
     const buf = Buffer.allocUnsafe(maxBytes + 1);
     let n = 0;
     while (n < buf.length) {
-      const got = readSync(fd, buf, n, buf.length - n, null);
+      const got = readIo(() => readSync(fd, buf, n, buf.length - n, null), abs);
       if (got === 0) break;
       n += got;
     }
@@ -281,10 +282,10 @@ export function readFileChecked(abs: string): Buffer {
       mapNativeReadError(e, abs);
     }
   }
-  const fd = fallbackOpen(abs);
+  const fd = readIo(() => fallbackOpen(abs), abs);
   try {
-    assertRegularSingleLink(fd, abs);
-    return readFileSync(fd);
+    readIo(() => assertRegularSingleLink(fd, abs), abs);
+    return readIo(() => readFileSync(fd), abs);
   } finally {
     closeSync(fd);
   }

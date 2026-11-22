@@ -44,6 +44,7 @@ const IndexVaultResult = z.object({
   notes_frontmatter_failed: z.number(),
   frontmatter_failures: z.array(z.object({ path: z.string(), error: z.string() })),
   notes_read_refused: z.number(),
+  notes_read_failed: z.number(),
   read_refusals: z.array(z.object({ path: z.string(), error: z.string() })),
   model: z.string().optional(),
   dimensions: z.number().optional(),
@@ -157,6 +158,7 @@ export function buildIndexTools(deps: M2Deps): ToolDefinition[] {
             notes_frontmatter_failed: frontmatterFailures.length,
             frontmatter_failures: frontmatterFailures,
             notes_read_refused: stats.notes_read_refused,
+            notes_read_failed: stats.notes_read_failed ?? 0,
             read_refusals: readRefusals,
           };
           if (resolveResponseFormat(input, deps.responseFormat) === "concise")
