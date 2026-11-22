@@ -582,7 +582,7 @@ export function buildBulkTools(deps: M6Deps): ToolDefinition[] {
               for (const m of p.moved) {
                 if (!overwriting.has(m.toRel)) continue;
                 try {
-                  trashed.push({ trashedTo: trashNote(v.root, m.toRel), abs: m.toAbs });
+                  trashed.push({ trashedTo: trashNote(v.root, m.toRel, "write"), abs: m.toAbs });
                 } catch (e) {
                   // One row's destination cannot be moved aside: that row fails alone (the others
                   // still move), so put back what was trashed and plan again without it.

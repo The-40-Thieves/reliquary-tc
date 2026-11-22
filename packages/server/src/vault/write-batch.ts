@@ -152,7 +152,7 @@ type UndoOutcome = "undone" | "diverged" | "stuck";
 function undoWrittenNote(abs: string, writtenHash: string, prevRaw: string | null): UndoOutcome {
   const aside = `${abs}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
   try {
-    moveNoReplace(abs, aside);
+    moveNoReplace(abs, aside, "write");
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT")
       return prevRaw === null ? "undone" : "diverged";

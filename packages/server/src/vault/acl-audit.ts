@@ -115,8 +115,10 @@ export function recordPathOp(op: AclOp, abs: string): void {
   if (!frame || path === undefined) return;
   const checkedOps = [...(frame.checked.get(path) ?? [])];
   if (checkedOps.includes(op)) return;
-  // Secondary backlink and reference rewrites intentionally touch runtime-discovered paths.
-  if (op === "write" && checkedOps.length === 0 && CROSS_NOTE_REWRITE_TOOLS.has(frame.tool)) return;
+  // Secondary backlink and reference rewrites intentionally touch runtime-discovered paths. Such
+  // a path carries no check, or only the read check the rewrite planner made on it.
+  const secondary = checkedOps.every((checked) => checked === "read");
+  if (op === "write" && secondary && CROSS_NOTE_REWRITE_TOOLS.has(frame.tool)) return;
   _collected.push({ tool: frame.tool, path, op, checkedOps });
   if (_strict)
     throw new Error(

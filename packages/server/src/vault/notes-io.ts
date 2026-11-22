@@ -487,10 +487,13 @@ export function stageNoteWrite(
 /**
  * Move `fromAbs` onto `toAbs` WITHOUT replacing an existing target or following a symlink in either
  * path (native: parents opened no-follow; JS: lstat'ed components, then link + unlink). An occupied
- * target throws note_exists. The primitive behind trashNote and its rollback.
+ * target throws note_exists. The primitive behind trashNote and its rollback. `fromOp` is what
+ * the ACL audit holds the caller to on `fromAbs`: moving a file aside as a step of writing it is a
+ * write, not a delete.
  */
-export function moveNoReplace(fromAbs: string, toAbs: string): void {
-  recordPathOp("delete", fromAbs);
+type SourceOp = "delete" | "write";
+export function moveNoReplace(fromAbs: string, toAbs: string, fromOp: SourceOp = "delete"): void {
+  recordPathOp(fromOp, fromAbs);
   recordPathOp("write", toAbs);
   if (nativeIo?.safeRenameNoReplace) {
     try {
@@ -633,7 +636,7 @@ export function statNote(abs: string): NoteStat | null {
  * itself refusing an occupied name (no check-then-rename window). A symlinked `.trash` (or any
  * symlinked component) is refused, never followed.
  */
-export function trashNote(root: string, relPath: string): string {
+export function trashNote(root: string, relPath: string, op: SourceOp = "delete"): string {
   const { stem, ext } = splitTrashName(relPath);
   const src = join(root, relPath);
   for (let i = 0; ; i++) {
@@ -641,7 +644,7 @@ export function trashNote(root: string, relPath: string): string {
     const dest = join(root, ".trash", candidate);
     ensureDirNoFollow(dirname(dest));
     try {
-      moveNoReplace(src, dest);
+      moveNoReplace(src, dest, op);
       return `.trash/${candidate}`;
     } catch (e) {
       if (!(e instanceof ReliquaryTcError && e.code === "note_exists") || i >= 10_000) throw e;
@@ -705,7 +708,7 @@ export function replaceDestination<T = void>(args: {
   checkText?: string;
 }): { trashedTo: string | null; value: T } {
   if (args.checkText !== undefined) preflightNoteWrite(args.toAbs, args.checkText);
-  const trashedTo = args.replacing ? trashNote(args.root, args.toRel) : null;
+  const trashedTo = args.replacing ? trashNote(args.root, args.toRel, "write") : null;
   let value: T;
   try {
     value = args.write({ exclusive: true, replacesExisting: trashedTo !== null });
