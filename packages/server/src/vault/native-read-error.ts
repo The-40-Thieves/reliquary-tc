@@ -15,8 +15,10 @@ export function readIoError(error: unknown, abs: string): unknown {
   const native = end > 3 ? message.slice(3, end) : undefined;
   let errno = native ?? (typeof e?.errno === "number" ? e.code : undefined);
   if (errno?.startsWith("#")) {
+    // An errno with no name comes back as a sentence (or throws when out of range).
     try {
-      errno = getSystemErrorName(-Number(errno.slice(1)));
+      const name = getSystemErrorName(-Number(errno.slice(1)));
+      errno = name.startsWith("Unknown") ? "UNKNOWN" : name;
     } catch {
       errno = "UNKNOWN";
     }

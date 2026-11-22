@@ -35,7 +35,9 @@ export function readOrRecordRefusal(
     )
       throw e;
     stats.notes_read_failed = (stats.notes_read_failed ?? 0) + 1;
-    stats.read_failures = [...(stats.read_failures ?? []), { path: rel, error: e.details.errno }];
+    const failures = stats.read_failures ?? [];
+    failures.push({ path: rel, error: e.details.errno });
+    stats.read_failures = failures;
     walkedSet.set(rel, ACL_PATH_UNRESOLVED);
     readableWalked.delete(rel);
     syncAclPaths(args.db, args.vaultId, new Map([[rel, ACL_PATH_UNRESOLVED]]), args.sql);

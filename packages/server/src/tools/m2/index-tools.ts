@@ -178,7 +178,10 @@ export function buildIndexTools(deps: M2Deps): ToolDefinition[] {
               notes_epoch_stale_skipped: stats.notes_epoch_stale_skipped,
               ...failures,
             };
-          return { vault: v.id, ...stats, ...failures };
+          // read_failures names paths no caller check covers: the count goes out, the list stays
+          // in the server log.
+          const { read_failures: _unlisted, ...counters } = stats;
+          return { vault: v.id, ...counters, ...failures };
         } catch (e) {
           deps.onIndexVaultError?.(v.id);
           throw e;
