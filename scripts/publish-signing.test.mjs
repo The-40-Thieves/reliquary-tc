@@ -88,8 +88,9 @@ test("every released artifact family is downloaded and has a signing step with a
   }
   for (const target of [
     "artifacts/native-*/*.node",
-    "artifacts/binary-*/reliquary-tc-!(*.map)",
+    "artifacts/binary-*/reliquary-tc-!(*.map|*-licenses.txt)",
     "artifacts/binary-*/reliquary-tc-*.map",
+    "artifacts/binary-*/reliquary-tc-*-licenses.txt",
     "artifacts/plugin/**/reliquary-tc-*.zip",
     "artifacts/plugin/**/main.js",
     "artifacts/plugin/**/manifest.json",
@@ -303,13 +304,25 @@ test("the sign_family keys match the families check-release-assets.sh pins, with
   assert.deepEqual([...keys].sort(), Object.keys(pinned).sort());
   assert.equal(
     Object.values(pinned).reduce((a, b) => a + b, 0),
-    24,
+    29,
   );
   // native and binary counts are the number of matrix rows in the jobs that build them
   const rows = (job) => (jobBlock(job).match(/^ {10}- host:/gm) ?? []).length;
   assert.equal(rows("build-native"), pinned.native);
   assert.equal(rows("build-binaries"), pinned.binary);
   assert.equal(rows("build-binaries"), pinned["binary-map"]);
+  assert.equal(rows("build-binaries"), pinned["binary-licenses"]);
+});
+
+test("every binary row proves its licence file exists before it is uploaded", () => {
+  const build = jobBlock("build-binaries");
+  const check = build.indexOf('[ -s "packages/server/dist/reliquary-tc-$TARGET-licenses.txt" ]');
+  const upload = build.indexOf("actions/upload-artifact@");
+  assert.ok(check !== -1, "build-binaries does not assert the licence file is non-empty");
+  assert.ok(check < upload, "the licence file is asserted after the upload");
+  // the assertion is its own step, so it also runs on the rows that cannot smoke-test
+  const step = build.slice(build.lastIndexOf("      - name:", check), check);
+  assert.doesNotMatch(step, /if: matrix\.smoke/);
 });
 
 test("draft-release creates a DRAFT, validates it, and only then publishes it", () => {
