@@ -144,7 +144,13 @@ const heading = (title) => `${RULE}\n${title}\n${RULE}\n`;
 const label = (p) => `${p.name}@${p.version} (${p.license})`;
 const block = (text) => `${text.trim()}\n`;
 
-function render({ artifact, project, packages, notes }) {
+/** How the file names what it describes: a compiled executable unless the caller says otherwise. */
+const EXECUTABLE = {
+  intro: "the third-party software bundled into this file's executable",
+  list: "Third-party packages bundled into this executable",
+};
+
+function render({ artifact, project, packages, notes, subject }) {
   // Packages whose texts are byte-identical share one copy, listed under all their names.
   const groups = new Map();
   for (const p of packages) {
@@ -153,11 +159,11 @@ function render({ artifact, project, packages, notes }) {
   }
   const out = [
     `Licence notices for ${artifact}\n`,
-    `${project.name} and the third-party software bundled into this file's executable.\n`,
+    `${project.name} and ${subject.intro}.\n`,
     heading(project.name),
     block(project.notice),
     block(project.license),
-    heading(`Third-party packages bundled into this executable (${packages.length})`),
+    heading(`${subject.list} (${packages.length})`),
     `${packages.map(label).join("\n")}\n`,
   ];
   for (const [body, members] of groups) {
@@ -171,7 +177,8 @@ function render({ artifact, project, packages, notes }) {
 
 /**
  * The licence file's text for one artifact, or an Error listing every problem. `project` is
- * `{ name, license, notice }` (the project's own texts); `notes` name what the file leaves out.
+ * `{ name, license, notice }` (the project's own texts); `notes` name what the file leaves out;
+ * `subject` is `{ intro, list }`, the two phrases that name the artifact's kind.
  */
 export function buildLicenseFile({
   artifact,
@@ -182,6 +189,7 @@ export function buildLicenseFile({
   extras,
   project,
   notes = [],
+  subject = EXECUTABLE,
 }) {
   const { packages, problems } = collectThirdParty({
     inputs,
@@ -195,5 +203,5 @@ export function buildLicenseFile({
       `cannot write the licence file for ${artifact}:\n${problems.map((p) => `  - ${p}`).join("\n")}`,
     );
   }
-  return render({ artifact, project, packages, notes });
+  return render({ artifact, project, packages, notes, subject });
 }

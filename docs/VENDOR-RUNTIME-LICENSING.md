@@ -75,13 +75,17 @@ Facts only. Each gap names its evidence path. None of these is fixed in this cha
   `scripts/pack-embedder-local.ts:57` packs `licenses/onnxruntime-LICENSE` into each one. MIT
   requires the notice in copies or substantial portions. The standalone binaries now ship it:
   each release binary has a `-licenses.txt` beside it that carries the ORT licence (section 2).
-  The MCPB bundle is still open. ORT's own third-party notices are linked from that file, not
-  reproduced in it.
+  The MCPB bundle ships it too: `THIRD-PARTY-LICENSES.txt` at the bundle root, written by
+  `scripts/bundle-mcpb.ts` from the server bundle's source maps and the embedder build's input
+  list, and the pack fails if that file, `LICENSE` or `NOTICE` is missing from the archive. ORT's
+  own third-party notices are linked from those files, not reproduced in them.
 - **G3. `sqlite-vec` licence text is not in its npm tarball.** `npm pack sqlite-vec@0.1.9` contains
   `README.md`, `index.cjs`, `index.d.ts`, `index.mjs`, `package.json` and no LICENSE. The MCPB and
   Docker artifacts copy the platform packages whole (`scripts/lib/mcpb-staging.mjs:125`), so the
   notice is absent unless a platform package carries it. Platform packages were NOT inspected
-  (UNVERIFIED).
+  (UNVERIFIED). The MCPB bundle no longer depends on that: its `THIRD-PARTY-LICENSES.txt` carries
+  both `sqlite-vec` licence texts for the loader and all five platform packages. The Docker image
+  is still open.
 - **G4. `onnxruntime-node` 1.30.0 npm tarball has no LICENSE file.** Contents: `README.md`, `bin`,
   `dist`, `lib`, `package.json`, `script`. Same notice question as G2 (UNVERIFIED for the bundled copy).
 - **G5. Model licence flow-down is not disclosed to users in what we read.** Catalog licences are recorded
