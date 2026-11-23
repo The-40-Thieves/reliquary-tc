@@ -47,7 +47,7 @@ import {
   ImmutableRewriteSkips,
 } from "../../vault/acl-path";
 import { readableEntry } from "../../vault/acl-read-filter";
-import { callerMayReadNote, requireContentRead } from "../../vault/cas";
+import { callerMayReadFile, callerMayReadNote, requireContentRead } from "../../vault/cas";
 import { requireConfirmation } from "../../vault/hitl";
 import { commitPlanned, PreImageSnapshots, planFingerprint } from "../../vault/move-plan";
 import {
@@ -426,10 +426,12 @@ export function buildAttachmentTools(deps: M3Deps): ToolDefinition[] {
         if (ex.exists && !input.overwrite)
           throw err.noteExists("attachment already exists; set overwrite", { path: rel });
         const replacing = ex.exists;
+        // The old size is the file's own: only a caller who may read it is told.
+        const mayRead = callerMayReadFile(ctx, v.root, rel, "read:attachments");
         requireConfirmation(ctx, "write_attachment", input, replacing, {
           path: rel,
           size,
-          previous_size: replacing ? (statNote(abs)?.size ?? null) : null,
+          previous_size: replacing && mayRead ? (statNote(abs)?.size ?? null) : null,
         });
 
         const bytes = Buffer.from(input.content, "base64");
@@ -648,7 +650,9 @@ export function buildAttachmentTools(deps: M3Deps): ToolDefinition[] {
             "refusing to permanently delete: some notes that may embed this attachment could not be read; delete to trash instead",
             { notes_read_refused: refusals.count },
           );
-        const st = statNote(abs);
+        // The size is the file's own: only a caller who may read it is told.
+        const mayRead = callerMayReadFile(ctx, v.root, rel, "read:attachments");
+        const st = mayRead ? statNote(abs) : null;
         let trashedTo: string | null = null;
         if (input.permanent) hardDelete(abs);
         else trashedTo = trashNote(v.root, rel);

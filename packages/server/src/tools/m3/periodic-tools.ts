@@ -33,7 +33,7 @@ import { enforceMemoryDefenseOnNoteWrite, MEMORY_DEFENSE_OFF } from "../../util/
 import { ResponseFormatInput, resolveResponseFormat } from "../../util/response-format";
 import { enforcePathAcl } from "../../vault/acl-path";
 import { readableResolved } from "../../vault/acl-read-filter";
-import { callerMayReadNote, requireContentRead } from "../../vault/cas";
+import { callerMayReadFile, callerMayReadNote, requireContentRead } from "../../vault/cas";
 import { parseNote } from "../../vault/frontmatter";
 import {
   hardDelete,
@@ -255,7 +255,8 @@ const AppendToPeriodicNoteOutput = z.object({
   date: z.string(),
   path: z.string(),
   updated_at: z.string(),
-  appended_bytes: z.number().int(),
+  /** Left out for a caller who may not read a note that already existed: it depends on its bytes. */
+  appended_bytes: z.number().int().optional(),
   created: z.boolean(),
   ...RedactionsField,
   ...conventionsResultShape,
@@ -638,12 +639,14 @@ export function buildPeriodicTools(deps: M3Deps): ToolDefinition[] {
         }
         deps.reindex?.(v.id, resolved.path, scan.content);
         ctx.noteWritten?.(resolved.path);
+        const appended = Buffer.byteLength(scan.content, "utf8") - Buffer.byteLength(base, "utf8");
+        const mayCount = created || callerMayReadFile(ctx, v.root, resolved.path, "read:periodic");
         return {
           period: input.period,
           date: toISODate(date),
           path: resolved.path,
           updated_at: new Date().toISOString(),
-          appended_bytes: Buffer.byteLength(scan.content, "utf8") - Buffer.byteLength(base, "utf8"),
+          ...(mayCount ? { appended_bytes: appended } : {}),
           created,
           ...(scan.redactions > 0 ? { redactions: scan.redactions } : {}),
         };
