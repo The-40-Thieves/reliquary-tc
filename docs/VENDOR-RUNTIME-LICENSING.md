@@ -110,9 +110,20 @@ Facts only. Each gap names its evidence path. None of these is fixed in this cha
   image's licence file reproduces the upstream notice, the LGPL and the GPL it builds on, and
   names the repository the library is built from (`scripts/third-party-license-texts/sharp-libvips.txt`).
   The licence texts of the non-LGPL libraries inside it are linked, not reproduced. Not covered by
-  that file: the base image (Bun and Debian packages) and the Rust crates in the native module.
+  that file: the base image (Bun and Debian packages). The Rust crates in the native module have
+  their own file beside the module (G8).
   `guid-typescript` 1.0.9 (a dependency of `onnxruntime-web`) declares ISC and publishes no
   licence text in its package or its repository, so the file carries the standard ISC text for it.
+- **G8. The native module's Rust crates.** The compiled module
+  (`@the-40-thieves/reliquary-tc-native` and its per-platform packages) links 25 crates, all
+  offering MIT, Apache-2.0 or ISC (`rustix` and `linux-raw-sys` also offer Apache-2.0 WITH
+  LLVM-exception; `memchr` also offers the Unlicense). `packages/native/THIRD-PARTY-LICENSES.txt`
+  carries their texts. It is committed, written by `scripts/write-native-license-file.mjs` from
+  `cargo metadata`, and `ci-native` fails when it no longer matches `Cargo.lock`. It ships in the
+  umbrella npm package, in each per-platform package (`publish.yml` copies it in) and beside the
+  module in the Docker image. `napi` and `napi-sys` publish no licence file in their crates; the
+  text is napi-rs's repository `LICENSE`. Not reproduced: the Rust standard library's notices.
+  The MCPB bundle and the standalone binaries do not contain the native module.
 - **G7. EmbeddingGemma was dropped from the catalog for licence reasons.** `model-info.ts` header
   and `docs/EVALUATION.md:351` say the Gemma terms are not OSI-approved. There is no Gemma flow-down
   today. If it is reintroduced, the flow-down in section 1 applies.

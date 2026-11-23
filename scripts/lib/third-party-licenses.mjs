@@ -55,7 +55,17 @@ export function packageDirsFromInputs(inputs, baseDir) {
   return [...dirs].sort();
 }
 
-function readOverride(overridesDir, key) {
+/** The licence and notice files in a package's root folder, as `{ file, text }`, sorted by name. */
+export function licenseTextsIn(dir) {
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && TEXT_FILE.test(e.name))
+    .map((e) => e.name)
+    .sort()
+    .map((file) => ({ file, text: lf(readFileSync(join(dir, file), "utf8")) }));
+}
+
+/** The reviewed text filed under `key` in the overrides folder, or undefined when there is none. */
+export function readOverride(overridesDir, key) {
   if (!overridesDir) return undefined;
   const file = overrideFileName(key);
   const path = join(overridesDir, file);
@@ -76,11 +86,7 @@ function readPackage(dir, { overridesDir, overrideAliases, alsoAccepted }, probl
   }
   const { name, version, license } = JSON.parse(readFileSync(manifest, "utf8"));
   const id = `${name}@${version}`;
-  const texts = readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isFile() && TEXT_FILE.test(e.name))
-    .map((e) => e.name)
-    .sort()
-    .map((file) => ({ file, text: lf(readFileSync(join(dir, file), "utf8")) }));
+  const texts = licenseTextsIn(dir);
   const key = overrideAliases[name] ?? name;
   const override = readOverride(overridesDir, key);
   if (texts.length > 0 && override) {
@@ -154,7 +160,11 @@ const EXECUTABLE = {
   list: "Third-party packages bundled into this executable",
 };
 
-function render({ artifact, project, packages, notes, subject }) {
+/**
+ * Lay out a licence file from packages already collected: `{ name, version, license, texts }`
+ * each. For callers whose list does not come from node_modules.
+ */
+export function renderLicenseFile({ artifact, project, packages, notes, subject }) {
   // Packages whose texts are byte-identical share one copy, listed under all their names.
   const groups = new Map();
   for (const p of packages) {
@@ -209,5 +219,5 @@ export function buildLicenseFile({
       `cannot write the licence file for ${artifact}:\n${problems.map((p) => `  - ${p}`).join("\n")}`,
     );
   }
-  return render({ artifact, project, packages, notes, subject });
+  return renderLicenseFile({ artifact, project, packages, notes, subject });
 }
