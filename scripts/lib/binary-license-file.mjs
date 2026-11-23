@@ -20,7 +20,7 @@ export const OVERRIDE_ALIASES = {
   "onnxruntime-web": "onnxruntime",
 };
 
-const ORT_NOTE =
+export const ORT_NOTE =
   "The libraries compiled into ONNX Runtime's native and WebAssembly builds. Its notices for " +
   "them are at https://github.com/microsoft/onnxruntime/blob/main/ThirdPartyNotices.txt.";
 const BUN_NOTE =
