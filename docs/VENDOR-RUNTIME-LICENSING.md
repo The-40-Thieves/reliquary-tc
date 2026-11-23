@@ -55,7 +55,7 @@ only in design or candidate lists.
 | Artifact | Bundled (may ship in it) | Dynamically loaded or fetched | User-installed only | Ships today? |
 |---|---|---|---|---|
 | npm package (`reliquary-tc`; `@the-40-thieves/reliquary-tc-embedder-local` base plus six per-platform runtime packages, per `packages/embedder-local/README.md`) | Our Apache-2.0 code. Runtime packages carry ORT (MIT) and the WASM fallback (MIT). The base package bundles Transformers.js (Apache-2.0). | Models fetched from Hugging Face at first use (`model-fetch.ts`) | Foundry Local, NIM, TensorRT-RTX, CUDA: planned only | Yes (embedder pack per `scripts/pack-embedder-local.ts`) |
-| Compiled `bun --compile` binaries (`scripts/build-binary.ts`) | Anything the build plugin embeds: ORT native library and binding, `sqlite-vec`. The plugin in `scripts/lib/embedder-bundle.mjs` rewrites the ORT loader. | Models fetched at runtime | As for npm | Yes, the script exists. No licence text in the binary was found in `build-binary.ts` (grep for "licen"/"notice" returned nothing). |
+| Compiled `bun --compile` binaries (`scripts/build-binary.ts`) | Anything the build plugin embeds: ORT native library and binding, `sqlite-vec`. The plugin in `scripts/lib/embedder-bundle.mjs` rewrites the ORT loader. | Models fetched at runtime | As for npm | Yes. `build-binary.ts` writes `<binary>-licenses.txt` beside each executable: the project's LICENSE and NOTICE plus the licence text of every package the bundler put into that target (`scripts/lib/third-party-licenses.mjs`). The release attaches and signs it. |
 | MCPB bundle (`dist/reliquary-tc.mcpb`, `scripts/bundle-mcpb.ts`) | Server build, all `sqlite-vec` platform packages, ORT native libraries for each platform (`ORT_PLATFORMS`), `onnxruntime-web` WASM, `@huggingface/transformers` | Models fetched at runtime; not in the bundle | Nothing required | Yes |
 | Docker image (`Dockerfile`) | `sqlite-vec` (`cp -rL` of its platform packages), `packages/embedder-local` (including `licenses/`), runtime `node_modules` | Models fetched at runtime. No model download step found in the Dockerfile. | Foundry Local, NIM, CUDA: planned only | Yes |
 | Remote worker container (`services/bge-m3-service`, `services/qwen-tei`, `services/docs-ingest`) | Service code (repo licence). Image contents for the Python services were NOT inspected in this pass. | `BAAI/bge-m3` and `BAAI/bge-reranker-v2-m3` fetched from the Hub (`hub.py`) | NVIDIA GPU stack and CUDA: UNVERIFIED for what the image installs | Yes, as a service in the repo. Image licence contents UNVERIFIED. |
@@ -73,9 +73,10 @@ Facts only. Each gap names its evidence path. None of these is fixed in this cha
   `scripts/lib/mcpb-staging.mjs` and `scripts/lib/embedder-bundle.mjs` for `LICENSE`, `licenses/`
   and `notice` returned no matches. The npm per-platform runtime packages do carry it:
   `scripts/pack-embedder-local.ts:57` packs `licenses/onnxruntime-LICENSE` into each one. MIT
-  requires the notice in copies or substantial portions. Whether
-  the binaries satisfy this is UNVERIFIED: ORT's notice may be carried by a file this grep did not
-  reach.
+  requires the notice in copies or substantial portions. The standalone binaries now ship it:
+  each release binary has a `-licenses.txt` beside it that carries the ORT licence (section 2).
+  The MCPB bundle is still open. ORT's own third-party notices are linked from that file, not
+  reproduced in it.
 - **G3. `sqlite-vec` licence text is not in its npm tarball.** `npm pack sqlite-vec@0.1.9` contains
   `README.md`, `index.cjs`, `index.d.ts`, `index.mjs`, `package.json` and no LICENSE. The MCPB and
   Docker artifacts copy the platform packages whole (`scripts/lib/mcpb-staging.mjs:125`), so the

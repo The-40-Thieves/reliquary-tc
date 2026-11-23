@@ -1006,6 +1006,19 @@ jobs:
             [ -f "$tmp/cache/$db" ] || { echo "::error::$db was not provisioned"; exit 1; }
           done
           echo "ok: $bin reports $want, reaches stdio-ready, and provisions both chains"
+      # scripts/build-binary.ts writes the licence file beside the binary (the project's licence
+      # and notice plus the text for every package bundled into this target) and fails when it
+      # cannot complete it. Asserted as its own step so the two cross-compiled rows, which skip
+      # the smoke test, are covered too.
+      - name: assert the licence file was written
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          [ -s "packages/server/dist/reliquary-tc-$TARGET-licenses.txt" ] || {
+            echo "::error::no licence file beside the $TARGET binary"
+            exit 1
+          }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: binary-${{ matrix.target }}
@@ -1395,10 +1408,11 @@ jobs:
           }
 
           sign_family native artifacts/native-*/*.node
-          # A standalone binary ships with its sourcemap; each is signed, under its own family so the
-          # binary count stays the build matrix's row count.
-          sign_family binary artifacts/binary-*/reliquary-tc-!(*.map)
+          # A standalone binary ships with its sourcemap and its licence file; each is signed, under
+          # its own family so the binary count stays the build matrix's row count.
+          sign_family binary artifacts/binary-*/reliquary-tc-!(*.map|*-licenses.txt)
           sign_family binary-map artifacts/binary-*/reliquary-tc-*.map
+          sign_family binary-licenses artifacts/binary-*/reliquary-tc-*-licenses.txt
           sign_family plugin-zip artifacts/plugin/**/reliquary-tc-*.zip
           sign_family plugin-main artifacts/plugin/**/main.js
           sign_family plugin-manifest artifacts/plugin/**/manifest.json
