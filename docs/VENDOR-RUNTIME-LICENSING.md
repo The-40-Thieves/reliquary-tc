@@ -78,7 +78,10 @@ Facts only. Each gap names its evidence path. None of these is fixed in this cha
   The MCPB bundle ships it too: `THIRD-PARTY-LICENSES.txt` at the bundle root, written by
   `scripts/bundle-mcpb.ts` from the server bundle's source maps and the embedder build's input
   list, and the pack fails if that file, `LICENSE` or `NOTICE` is missing from the archive. ORT's
-  own third-party notices are linked from those files, not reproduced in them.
+  own third-party notices are linked from those files, not reproduced in them. The server build
+  itself writes `dist/THIRD-PARTY-LICENSES.txt` for the packages built into `dist/*.js`, so the npm
+  package and the Docker image carry those texts; that file does not cover ORT or `sqlite-vec`,
+  which neither of them has built in.
 - **G3. `sqlite-vec` licence text is not in its npm tarball.** `npm pack sqlite-vec@0.1.9` contains
   `README.md`, `index.cjs`, `index.d.ts`, `index.mjs`, `package.json` and no LICENSE. The MCPB and
   Docker artifacts copy the platform packages whole (`scripts/lib/mcpb-staging.mjs:125`), so the

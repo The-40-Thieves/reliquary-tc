@@ -11,17 +11,10 @@
 //   embedder    the input list of the build scripts/bundle-mcpb.ts runs;
 //   copied in   sqlite-vec and ONNX Runtime, named by the caller because they are files, not
 //               modules of either build.
-import {
-  closeSync,
-  existsSync,
-  fstatSync,
-  openSync,
-  readdirSync,
-  readFileSync,
-  readSync,
-} from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ORT_NOTE, OVERRIDE_ALIASES, OVERRIDES_DIR } from "./binary-license-file.mjs";
+import { sourceMapInputs } from "./server-dist-license-file.mjs";
 import { buildLicenseFile } from "./third-party-licenses.mjs";
 
 export const MCPB_LICENSE_FILE = "THIRD-PARTY-LICENSES.txt";
@@ -30,32 +23,6 @@ const SUBJECT = {
   intro: "the third-party software in the bundle this file is part of",
   list: "Third-party packages in this bundle",
 };
-
-/**
- * Every source of every built bundle directly in `distDir`, as absolute paths. A bundle with no
- * source map, or a map with no sources, is an error: the list would silently come up short.
- */
-export function sourceMapInputs(distDir) {
-  const bundles = readdirSync(distDir)
-    .filter((name) => name.endsWith(".js"))
-    .sort();
-  if (bundles.length === 0) throw new Error(`mcpb-license-file: no built .js in ${distDir}`);
-  const inputs = [];
-  for (const name of bundles) {
-    const map = join(distDir, `${name}.map`);
-    if (!existsSync(map)) {
-      throw new Error(
-        `mcpb-license-file: ${name} has no source map; the licence list is read from ${name}.map`,
-      );
-    }
-    const { sources } = JSON.parse(readFileSync(map, "utf8"));
-    if (!Array.isArray(sources) || sources.length === 0) {
-      throw new Error(`mcpb-license-file: ${name}.map lists no sources`);
-    }
-    for (const source of sources) inputs.push(resolve(distDir, source));
-  }
-  return inputs;
-}
 
 const manifestOf = (dir) => JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
 
