@@ -48,6 +48,20 @@ import { join } from "node:path";
 //                   live-tree-write failure mode THE-951 removes).
 const SKIP_ROOT_ENTRIES = new Set([".git", "dist", "node_modules", "manifest.json"]);
 
+// Every name the packed bundle may hold at its root. The files come from the repo (manifest.json
+// from mcpb/manifest.json), `node_modules` is assembled by stageRuntimeModules, and the third-party
+// licence file is one the caller's `populate` may write.
+export const BUNDLE_ROOT_ENTRIES = [
+  "LICENSE",
+  "NOTICE",
+  "README.md",
+  "manifest.json",
+  "package.json",
+  "THIRD-PARTY-LICENSES.txt",
+  "node_modules",
+  "packages",
+];
+
 /**
  * Hardlinks `src` onto `dest`, falling back to a real copy when they are on different
  * filesystems (`EXDEV` — a `link(2)` limitation, not something a retry fixes). Injectable so
