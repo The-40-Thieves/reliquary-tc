@@ -2,9 +2,11 @@
 //
 //   bun run bundle
 //
-// Ships the built server (packages/server/dist), the MCPB 0.3 manifest, and package
-// metadata; honors .mcpbignore. The manifest is validated before packing, and the MCPB
-// CLI version is pinned for reproducible output.
+// Ships the built server (packages/server/dist), the MCPB 0.3 manifest, the licence files and
+// package metadata, plus the node_modules assembled here. What is staged from the repo is an
+// allow-list (STAGED_REPO_PATHS in scripts/lib/mcpb-staging.mjs); .mcpbignore only prunes inside it.
+// The manifest is validated before packing, and the MCPB CLI version is pinned for reproducible
+// output.
 //
 // THE-950: the repo-root manifest.json is now the companion plugin's Obsidian manifest (Obsidian's
 // community-directory validator reads it from the repo's default branch, and it must live there —
