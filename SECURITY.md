@@ -231,7 +231,7 @@ digest in the same shared action, under that run's identity. Verify it with the 
 
 Publication is ordered so that a signing failure ships nothing: no npm package, image, or GitHub Release
 is published until the `sign-artifacts` job has signed and verified every artifact. The GitHub Release is
-created as a draft, checked against a manifest of every bundle the signing job produced (all 19, per
+created as a draft, checked against a manifest of every bundle the signing job produced (all 29, per
 family), and only then published.
 
 How this relates to the other release records, none of which it replaces:

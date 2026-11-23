@@ -45,6 +45,7 @@ on:
       - 'scripts/build-binary.ts'
       - 'scripts/gen-embedded-*.mjs'
       - 'scripts/lib/**'
+      - 'scripts/third-party-license-texts/**'
       - '.mcpbignore'
       - 'bun.lock'
       - '.github/workflows/ci-first-run-smoke.yml'

@@ -33,6 +33,8 @@ const BINARIES = [
 ];
 // Each standalone binary ships its sourcemap; the windows map drops the .exe.
 const MAPS = BINARIES.map((b) => `${b.replace(/\.exe$/, "")}.map`);
+// Each standalone binary also ships its licence file, named for the target (no .exe).
+const LICENSES = BINARIES.map((b) => `${b.replace(/\.exe$/, "")}-licenses.txt`);
 const ZIPS = ["reliquary-tc-plugin-1.2.3.zip", "reliquary-tc-legacy-final-notice-1.0.0.zip"];
 const LOOSE = ["main.js", "manifest.json", "styles.css"];
 const MCPB = ["reliquary-tc.mcpb"];
@@ -42,6 +44,7 @@ const FAMILIES = [
   ["native", NATIVE],
   ["binary", BINARIES],
   ["binary-map", MAPS],
+  ["binary-licenses", LICENSES],
   ["plugin-zip", ZIPS],
   ["plugin-main", ["main.js"]],
   ["plugin-manifest", ["manifest.json"]],
@@ -56,7 +59,7 @@ function complete() {
   const manifestLines = FAMILIES.flatMap(([fam, names]) =>
     names.map((n) => `${fam}\t${bundle(n)}`),
   );
-  const checksummed = [...BINARIES, ...MAPS, ...ZIPS, ...MCPB];
+  const checksummed = [...BINARIES, ...MAPS, ...LICENSES, ...ZIPS, ...MCPB];
   const assets = [
     ...checksummed,
     ...LOOSE,
@@ -91,10 +94,23 @@ function run({ assets, manifestLines, checksummed, shasums }) {
   }
 }
 
-test("a complete release passes and reports all 19 bundles", () => {
+test("a complete release passes and reports all 29 bundles", () => {
   const r = run(complete());
   assert.equal(r.status, 0, r.stdout + r.stderr);
-  assert.match(r.stdout, /24 cosign bundles/);
+  assert.match(r.stdout, /29 cosign bundles/);
+});
+
+test("a release whose binaries ship without their licence files fails on the count", () => {
+  const c = complete();
+  const lost = new Set(LICENSES.map(bundle));
+  const r = run({
+    ...c,
+    checksummed: c.checksummed.filter((n) => !LICENSES.includes(n)),
+    manifestLines: c.manifestLines.filter((l) => !l.startsWith("binary-licenses\t")),
+    assets: c.assets.filter((n) => !LICENSES.includes(n) && !lost.has(n)),
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout, /signature manifest has 0 'binary-licenses' bundle\(s\), expected 5/);
 });
 
 test("RED case: a release missing all eight native bundles fails", () => {
