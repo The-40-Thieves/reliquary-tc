@@ -17,6 +17,7 @@ import { isAbsolute, join, resolve, sep } from "node:path";
  * expression is a decision for a person, so an unknown one fails the build instead of passing.
  */
 export const ACCEPTED_LICENSES = new Set([
+  "(MIT OR CC0-1.0)",
   "0BSD",
   "Apache-2.0",
   "BSD-2-Clause",
@@ -61,13 +62,13 @@ function readOverride(overridesDir, key) {
   return existsSync(path) ? { file, text: lf(readFileSync(path, "utf8")) } : undefined;
 }
 
-function licenseProblem(id, license) {
+function licenseProblem(id, license, alsoAccepted) {
   if (typeof license !== "string" || license.trim() === "") return `${id} declares no licence`;
-  if (ACCEPTED_LICENSES.has(license)) return undefined;
+  if (ACCEPTED_LICENSES.has(license) || alsoAccepted.includes(license)) return undefined;
   return `${id} is licensed "${license}", which is not accepted (scripts/lib/third-party-licenses.mjs)`;
 }
 
-function readPackage(dir, { overridesDir, overrideAliases }, problems) {
+function readPackage(dir, { overridesDir, overrideAliases, alsoAccepted }, problems) {
   const manifest = join(dir, "package.json");
   if (!existsSync(manifest)) {
     problems.push(`${dir.split(sep).join("/")} has no package.json`);
@@ -91,7 +92,7 @@ function readPackage(dir, { overridesDir, overrideAliases }, problems) {
       `${id} ships no licence text; add a reviewed copy as ${overrideFileName(key)} in the overrides folder`,
     );
   }
-  const bad = licenseProblem(id, license);
+  const bad = licenseProblem(id, license, alsoAccepted);
   if (bad) problems.push(bad);
   return { name, version, license, texts };
 }
@@ -100,8 +101,10 @@ function readPackage(dir, { overridesDir, overrideAliases }, problems) {
  * Collect every third-party package in a build. `extras` lists what is embedded without being a
  * module in the graph (a native library baked in as bytes): `{ name, version, license, override }`,
  * where `override` names the reviewed text to use. `overrideAliases` maps a package name to the
- * override that covers it, for one text shared by several packages. Returns the packages sorted by
- * name and every problem found; an empty `problems` is the only state in which the list may ship.
+ * override that covers it, for one text shared by several packages. `alsoAccepted` lists licence
+ * expressions accepted for this artifact alone, beyond ACCEPTED_LICENSES. Returns the packages
+ * sorted by name and every problem found; an empty `problems` is the only state in which the list
+ * may ship.
  */
 export function collectThirdParty({
   inputs,
@@ -109,11 +112,12 @@ export function collectThirdParty({
   overridesDir,
   overrideAliases = {},
   extras = [],
+  alsoAccepted = [],
 }) {
   const problems = [];
   const packages = [];
   for (const dir of packageDirsFromInputs(inputs, baseDir)) {
-    const found = readPackage(dir, { overridesDir, overrideAliases }, problems);
+    const found = readPackage(dir, { overridesDir, overrideAliases, alsoAccepted }, problems);
     if (found) packages.push(found);
   }
   if (packages.length === 0 && problems.length === 0) {
@@ -127,7 +131,7 @@ export function collectThirdParty({
         `${id} ships no licence text; add a reviewed copy as ${overrideFileName(override)} in the overrides folder`,
       );
     }
-    const bad = licenseProblem(id, license);
+    const bad = licenseProblem(id, license, alsoAccepted);
     if (bad) problems.push(bad);
     packages.push({ name, version, license, texts: text ? [text] : [] });
   }
@@ -187,6 +191,7 @@ export function buildLicenseFile({
   overridesDir,
   overrideAliases,
   extras,
+  alsoAccepted,
   project,
   notes = [],
   subject = EXECUTABLE,
@@ -197,6 +202,7 @@ export function buildLicenseFile({
     overridesDir,
     overrideAliases,
     extras,
+    alsoAccepted,
   });
   if (problems.length > 0) {
     throw new Error(

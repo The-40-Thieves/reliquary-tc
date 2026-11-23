@@ -57,7 +57,7 @@ only in design or candidate lists.
 | npm package (`reliquary-tc`; `@the-40-thieves/reliquary-tc-embedder-local` base plus six per-platform runtime packages, per `packages/embedder-local/README.md`) | Our Apache-2.0 code. Runtime packages carry ORT (MIT) and the WASM fallback (MIT). The base package bundles Transformers.js (Apache-2.0). | Models fetched from Hugging Face at first use (`model-fetch.ts`) | Foundry Local, NIM, TensorRT-RTX, CUDA: planned only | Yes (embedder pack per `scripts/pack-embedder-local.ts`) |
 | Compiled `bun --compile` binaries (`scripts/build-binary.ts`) | Anything the build plugin embeds: ORT native library and binding, `sqlite-vec`. The plugin in `scripts/lib/embedder-bundle.mjs` rewrites the ORT loader. | Models fetched at runtime | As for npm | Yes. `build-binary.ts` writes `<binary>-licenses.txt` beside each executable: the project's LICENSE and NOTICE plus the licence text of every package the bundler put into that target (`scripts/lib/third-party-licenses.mjs`). The release attaches and signs it. |
 | MCPB bundle (`dist/reliquary-tc.mcpb`, `scripts/bundle-mcpb.ts`) | Server build, all `sqlite-vec` platform packages, ORT native libraries for each platform (`ORT_PLATFORMS`), `onnxruntime-web` WASM, `@huggingface/transformers` | Models fetched at runtime; not in the bundle | Nothing required | Yes |
-| Docker image (`Dockerfile`) | `sqlite-vec` (`cp -rL` of its platform packages), `packages/embedder-local` (including `licenses/`), runtime `node_modules` | Models fetched at runtime. No model download step found in the Dockerfile. | Foundry Local, NIM, CUDA: planned only | Yes |
+| Docker image (`Dockerfile`) | `sqlite-vec` (`cp -rL` of its platform packages), `packages/embedder-local` (including `licenses/`) with its production packages only, runtime `node_modules` | Models fetched at runtime. No model download step found in the Dockerfile. | Foundry Local, NIM, CUDA: planned only | Yes. The build stage writes `/app/THIRD-PARTY-LICENSES.txt` from the folders the image copies (`scripts/lib/image-license-file.mjs`); see G3 and G7. |
 | Remote worker container (`services/bge-m3-service`, `services/qwen-tei`, `services/docs-ingest`) | Service code (repo licence). Image contents for the Python services were NOT inspected in this pass. | `BAAI/bge-m3` and `BAAI/bge-reranker-v2-m3` fetched from the Hub (`hub.py`) | NVIDIA GPU stack and CUDA: UNVERIFIED for what the image installs | Yes, as a service in the repo. Image licence contents UNVERIFIED. |
 
 ## 3. Gaps today
@@ -88,7 +88,8 @@ Facts only. Each gap names its evidence path. None of these is fixed in this cha
   notice is absent unless a platform package carries it. Platform packages were NOT inspected
   (UNVERIFIED). The MCPB bundle no longer depends on that: its `THIRD-PARTY-LICENSES.txt` carries
   both `sqlite-vec` licence texts for the loader and all five platform packages. The Docker image
-  is still open.
+  no longer depends on it either: `/app/THIRD-PARTY-LICENSES.txt` carries both texts for the loader
+  and the platform package that image was built with.
 - **G4. `onnxruntime-node` 1.30.0 npm tarball has no LICENSE file.** Contents: `README.md`, `bin`,
   `dist`, `lib`, `package.json`, `script`. Same notice question as G2 (UNVERIFIED for the bundled copy).
 - **G5. Model licence flow-down is not disclosed to users in what we read.** Catalog licences are recorded
@@ -100,6 +101,18 @@ Facts only. Each gap names its evidence path. None of these is fixed in this cha
   builds the URL and `ALLOWED_DOWNLOAD_HOST_SUFFIXES` (line 426) limits redirects to `huggingface.co`
   and `hf.co`. A fetched model is covered by its own licence (all current catalog entries are Apache-2.0
   or MIT). This is a fact about the download path, not a licence problem.
+- **G7. The Docker image carries an LGPL library.** `@huggingface/transformers` depends on `sharp`
+  (Apache-2.0), which installs `@img/sharp-libvips-linux-<arch>` 1.3.4: a prebuilt libvips shared
+  library under LGPL-3.0-or-later with further libraries built into it (its README lists each one;
+  `cairo` is under MPL-1.1). The package has no licence file. The image keeps it as a separate
+  file under `packages/embedder-local/node_modules`, unmodified. `LGPL-3.0-or-later` is accepted
+  for the image alone (`IMAGE_ONLY_LICENSES` in `scripts/lib/image-license-file.mjs`), and the
+  image's licence file reproduces the upstream notice, the LGPL and the GPL it builds on, and
+  names the repository the library is built from (`scripts/third-party-license-texts/sharp-libvips.txt`).
+  The licence texts of the non-LGPL libraries inside it are linked, not reproduced. Not covered by
+  that file: the base image (Bun and Debian packages) and the Rust crates in the native module.
+  `guid-typescript` 1.0.9 (a dependency of `onnxruntime-web`) declares ISC and publishes no
+  licence text in its package or its repository, so the file carries the standard ISC text for it.
 - **G7. EmbeddingGemma was dropped from the catalog for licence reasons.** `model-info.ts` header
   and `docs/EVALUATION.md:351` say the Gemma terms are not OSI-approved. There is no Gemma flow-down
   today. If it is reintroduced, the flow-down in section 1 applies.
