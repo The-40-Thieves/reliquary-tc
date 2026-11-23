@@ -70,7 +70,8 @@ RUN set -eu; \
     node_file="packages/native/reliquary-tc-native.linux-${napi_arch}-gnu.node"; \
     dest=/out/node_modules/@the-40-thieves/reliquary-tc-native; \
     mkdir -p "$dest"; \
-    cp packages/native/package.json packages/native/index.js packages/native/fallback.js "$dest/"; \
+    cp packages/native/package.json packages/native/index.js packages/native/fallback.js \
+       packages/native/THIRD-PARTY-LICENSES.txt "$dest/"; \
     if [ -f "$node_file" ]; then \
       cp "$node_file" "$dest/"; \
     elif [ "$NATIVE_REQUIRED" = "1" ]; then \

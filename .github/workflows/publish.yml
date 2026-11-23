@@ -388,6 +388,12 @@ jobs:
             node -e 'const fs=require("fs");const f=process.argv[1];const p=JSON.parse(fs.readFileSync(f,"utf8"));p.publishConfig=Object.assign({},p.publishConfig,{access:"public",provenance:true});fs.writeFileSync(f,JSON.stringify(p,null,2)+"\n");' "$f"
             echo "publishConfig.access=public, provenance=true -> $f"
           done
+      # Each platform sub-package carries the compiled module, so it carries the licence texts of
+      # the Rust crates inside it: the committed packages/native/THIRD-PARTY-LICENSES.txt, copied
+      # into every npm/<triple> dir and added to its `files`.
+      - name: add the crate licence file to each platform sub-package
+        if: steps.preflight.outputs.already_published != 'true'
+        run: node scripts/add-native-license-to-platform-packages.mjs
       # Platform sub-packages (one per built triple, @the-40-thieves/reliquary-tc-native-<triple>)
       # + the umbrella optionalDependencies are generated and published by `napi pre-publish`.
       - name: publish platform sub-packages (napi)

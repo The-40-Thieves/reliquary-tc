@@ -45,8 +45,9 @@ const BASE_NOTE =
   "The base image: the Bun runtime (https://bun.sh/docs/project/licensing) and the Debian " +
   "packages under it, whose notices are in /usr/share/doc/*/copyright in the image.";
 const NATIVE_NOTE =
-  "The Rust crates compiled into the project's native module " +
-  "(node_modules/@the-40-thieves/reliquary-tc-native).";
+  "The Rust crates compiled into the project's native module. Their texts are in " +
+  "THIRD-PARTY-LICENSES.txt beside it (packages/server/node_modules/@the-40-thieves/" +
+  "reliquary-tc-native).";
 const LIBVIPS_NOTE =
   "The licence texts of the libraries inside the prebuilt libvips that are not under the LGPL. " +
   "Its notice above names each one and where its terms are.";

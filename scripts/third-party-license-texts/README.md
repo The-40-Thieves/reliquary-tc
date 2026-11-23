@@ -11,6 +11,7 @@ text to ship. Each is a copy of the licence in the project's own repository.
 | `onnxruntime.txt` | `onnxruntime-common`, `onnxruntime-node`, `onnxruntime-web` | `packages/embedder-local/licenses/onnxruntime-LICENSE` in this repository (`LICENSE` in `microsoft/onnxruntime`) |
 | `sqlite-vec.txt` | the `sqlite-vec-<platform>` library embedded in a binary | `LICENSE-MIT` and `LICENSE-APACHE` in `asg017/sqlite-vec`, tag `v0.1.9` |
 | `sharp-libvips.txt` | `@img/sharp-libvips-<platform>`, the prebuilt libvips in the Docker image | `THIRD-PARTY-NOTICES.md` in `lovell/sharp-libvips`, tag `v1.3.4`, then `lgpl-3.0.txt` and `gpl-3.0.txt` from `www.gnu.org/licenses` |
+| `napi-rs.txt` | the `napi` and `napi-sys` Rust crates in the native module | `LICENSE` in `napi-rs/napi-rs`, branch `main` (read 2026-11-23) |
 | `guid-typescript.txt` | `guid-typescript` | Nowhere: neither the package nor `NicolasDeveloper/guid-typescript` has a licence file. The standard ISC text, for the `"license": "ISC"` and `"author"` its `package.json` declares |
 
 A file is named after its package, with `/` written as `__`. One file may cover several packages
