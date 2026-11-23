@@ -9,8 +9,8 @@ import {
   buildMcpbLicenseText,
   listZipEntries,
   MCPB_LICENSE_FILE,
-  sourceMapInputs,
 } from "./lib/mcpb-license-file.mjs";
+import { sourceMapInputs } from "./lib/server-dist-license-file.mjs";
 
 const REPO = join(import.meta.dirname, "..");
 
