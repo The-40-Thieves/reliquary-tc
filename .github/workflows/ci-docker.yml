@@ -12,8 +12,12 @@ on:
       - "packages/server/**"
       - "packages/shared/**"
       - "packages/native/**"
+      - "packages/embedder-local/**"
       - "deploy/**"
       - "scripts/docker-boot-smoke.mjs"
+      - "scripts/write-image-license-file.mjs"
+      - "scripts/lib/**"
+      - "scripts/third-party-license-texts/**"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/ci-docker.yml"
@@ -81,6 +85,17 @@ jobs:
           echo "container reports: $got (want $want)"
           [ "$got" = "$want" ] || { echo "::error::container reports '$got', expected '$want'"; exit 1; }
           echo "ok: containerized server built and reports $want"
+      # The image's own licence file: written by the build stage from the packages the image
+      # copies, so a missing one means the COPY was dropped. The embedder's development packages
+      # must be gone too, or the file would not describe what is in the image.
+      - name: smoke — the image carries its third-party licence file and no development packages
+        run: |
+          for name in '@huggingface/transformers' 'sqlite-vec-linux-x64' '@redis/client' 'hono'; do
+            docker run --rm --entrypoint grep reliquary-tc:ci -c "^${name}@" /app/THIRD-PARTY-LICENSES.txt \
+              || { echo "::error::/app/THIRD-PARTY-LICENSES.txt does not list ${name}"; exit 1; }
+          done
+          docker run --rm --entrypoint test reliquary-tc:ci ! -e /app/packages/embedder-local/node_modules/vitest \
+            || { echo "::error::the image still carries the embedder's development packages"; exit 1; }
       # The redis rate-limit backend (throttle.backend "redis") loads @redis/client lazily, so a
       # missing package only shows at runtime on a fleet. Resolve it exactly as the bundle does
       # (bare specifier from dist/) so a Dockerfile change that drops the copy fails on the PR.
