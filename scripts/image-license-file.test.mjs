@@ -1,11 +1,11 @@
 // The licence file at the root of the Docker image (scripts/lib/image-license-file.mjs). The image
 // copies whole node_modules folders, so the list is read from those folders.
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
-import { packageDirsInTree, writeImageLicenseFile } from "./lib/image-license-file.mjs";
+import { buildImageLicenseFile, packageDirsInTree } from "./lib/image-license-file.mjs";
 import { collectThirdParty } from "./lib/third-party-licenses.mjs";
 
 const REPO = join(import.meta.dirname, "..");
@@ -48,9 +48,8 @@ const SERVER = {
   "overrides/sharp-libvips.txt": "LIBVIPS NOTICE AND LGPL\n",
 };
 
-const write = (root, trees) =>
-  writeImageLicenseFile({
-    outFile: join(root, "out", "THIRD-PARTY-LICENSES.txt"),
+const build = (root, trees) =>
+  buildImageLicenseFile({
     trees: trees.map((tree) => join(root, tree)),
     serverDist: join(root, "packages", "server", "dist"),
     repoRoot: root,
@@ -94,9 +93,8 @@ test("the image file lists the server build's packages and every copied tree", (
     ),
   };
   withScratch(files, (root) => {
-    const result = write(root, ["out/node_modules", "emb/node_modules"]);
-    assert.equal(result.packages, 6);
-    const text = readFileSync(result.path, "utf8");
+    const { text, packages } = build(root, ["out/node_modules", "emb/node_modules"]);
+    assert.equal(packages, 6);
     assert.match(text, /^Licence notices for the reliquary-tc Docker image\n/);
     for (const expected of [
       "PROJECT NOTICE",
@@ -116,43 +114,30 @@ test("the image file lists the server build's packages and every copied tree", (
   });
 });
 
-test("a copied package with no licence text stops the build and leaves no file", () => {
+test("a copied package with no licence text stops the build", () => {
   const files = { ...SERVER, ...pkg("out/node_modules/bare", "bare", "MIT", false) };
   withScratch(files, (root) => {
-    const stale = join(root, "out", "THIRD-PARTY-LICENSES.txt");
-    writeFileSync(stale, "STALE\n");
-    assert.throws(() => write(root, ["out/node_modules"]), /bare@1\.0\.0 ships no licence text/);
-    assert.equal(existsSync(stale), false);
+    assert.throws(() => build(root, ["out/node_modules"]), /bare@1\.0\.0 ships no licence text/);
   });
 });
 
-test("the output is only ever the licence file, never another path", () => {
-  const files = { ...SERVER, ...pkg("out/node_modules/copied", "copied", "MIT") };
-  withScratch(files, (root) => {
-    const other = join(root, "out", "keep.txt");
-    writeFileSync(other, "KEEP\n");
-    const to = (outFile) =>
-      writeImageLicenseFile({
-        outFile,
-        trees: [join(root, "out", "node_modules")],
-        serverDist: join(root, "packages", "server", "dist"),
-        repoRoot: root,
-        overridesDir: join(root, "overrides"),
-      });
-    assert.throws(() => to(other), /must be named THIRD-PARTY-LICENSES\.txt/);
-    assert.equal(readFileSync(other, "utf8"), "KEEP\n");
-    // A folder of that name is not removed in place of a file.
-    const folder = join(root, "dir", "THIRD-PARTY-LICENSES.txt");
-    mkdirSync(folder, { recursive: true });
-    assert.throws(() => to(folder), /is not a regular file/);
-    assert.equal(existsSync(folder), true);
-  });
+test("the generator names no output file: it prints the text and the build redirects it", () => {
+  const scripts = join(REPO, "scripts");
+  for (const file of ["write-image-license-file.mjs", join("lib", "image-license-file.mjs")]) {
+    const source = readFileSync(join(scripts, file), "utf8");
+    for (const call of ["writeFileSync", "rmSync", "unlinkSync", "createWriteStream"]) {
+      assert.ok(!source.includes(call), `${file} calls ${call}`);
+    }
+  }
+  const cli = readFileSync(join(scripts, "write-image-license-file.mjs"), "utf8");
+  assert.ok(!/\bout:\s*\{/.test(cli), "the script still takes an --out option");
+  assert.ok(cli.includes("process.stdout.write"), "the script does not print the text");
 });
 
 test("a copied package under a licence nobody accepted stops the build", () => {
   const files = { ...SERVER, ...pkg("out/node_modules/copyleft", "copyleft", "MPL-2.0") };
   withScratch(files, (root) => {
-    assert.throws(() => write(root, ["out/node_modules"]), /"MPL-2\.0", which is not accepted/);
+    assert.throws(() => build(root, ["out/node_modules"]), /"MPL-2\.0", which is not accepted/);
   });
 });
 
@@ -194,6 +179,11 @@ test("the Dockerfile drops development packages, then writes and copies the file
   for (const tree of ["--tree /out/node_modules", "--tree packages/embedder-local/node_modules"]) {
     assert.ok(dockerfile.includes(tree), `the generator is not given ${tree}`);
   }
+  assert.match(
+    dockerfile,
+    /bun scripts\/write-image-license-file\.mjs [^&|;]*> \/out\/THIRD-PARTY-LICENSES\.txt\n/,
+    "the generator's output is not redirected into the file",
+  );
   assert.match(dockerfile, /COPY --from=build .*\/out\/THIRD-PARTY-LICENSES\.txt \/app\/\n/);
 });
 

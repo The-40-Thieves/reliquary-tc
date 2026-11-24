@@ -5,17 +5,8 @@
 // copied in as folders, so the list is read from the folders themselves: every package directory
 // in each tree, however it got there. The server build's own list (its source maps) is added so
 // one file covers the image.
-import {
-  existsSync,
-  lstatSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { ORT_NOTE, OVERRIDE_ALIASES, OVERRIDES_DIR } from "./binary-license-file.mjs";
 import { sourceMapInputs } from "./server-dist-license-file.mjs";
 import { buildLicenseFile, collectThirdParty } from "./third-party-licenses.mjs";
@@ -112,37 +103,18 @@ function sqliteVecExtra(dir) {
   return { name, version, license: "MIT OR Apache-2.0", override: "sqlite-vec" };
 }
 
-const IMAGE_LICENSE_FILE = "THIRD-PARTY-LICENSES.txt";
-
 /**
- * The path this script may remove and write: a file of the one fixed name, in the folder the
- * caller named. The caller's path comes from the command line, so it never picks the file name,
- * and something of that name that is not a regular file (a folder, a link) is left alone.
+ * The image's licence file as `{ text, packages }`. `trees` are the node_modules folders the image
+ * copies; `serverDist` is the built server. Throws when the list cannot be completed. Nothing is
+ * written here: the caller prints the text and the image build redirects it, so no path from the
+ * command line is ever removed or written.
  */
-function licenseFileAt(requested) {
-  const asked = resolve(requested);
-  const path = join(dirname(asked), IMAGE_LICENSE_FILE);
-  if (path !== asked)
-    throw new Error(`licence list: the output must be named ${IMAGE_LICENSE_FILE}, got ${asked}`);
-  if (lstatSync(path, { throwIfNoEntry: false })?.isFile() === false)
-    throw new Error(`licence list: ${path} exists and is not a regular file`);
-  return path;
-}
-
-/**
- * Write the image's licence file to `outFile` and return `{ path, packages }`. `trees` are the
- * node_modules folders the image copies; `serverDist` is the built server. Throws when the list
- * cannot be completed, and then leaves no file behind.
- */
-export function writeImageLicenseFile({
-  outFile,
+export function buildImageLicenseFile({
   trees,
   serverDist,
   repoRoot,
   overridesDir = OVERRIDES_DIR,
 }) {
-  const path = licenseFileAt(outFile);
-  rmSync(path, { force: true });
   const dirs = trees.flatMap(packageDirsInTree);
   const source = {
     inputs: [
@@ -166,6 +138,5 @@ export function writeImageLicenseFile({
       notice: readFileSync(join(repoRoot, "NOTICE"), "utf8"),
     },
   });
-  writeFileSync(path, text);
-  return { path, packages: collectThirdParty(source).packages.length };
+  return { text, packages: collectThirdParty(source).packages.length };
 }
