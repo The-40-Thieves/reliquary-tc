@@ -36,6 +36,9 @@ interface AuditFrame {
   auditUses: boolean;
   checked: Map<string, Set<AclOp>>;
   paths: Map<string, string>;
+  /** Paths the tool's own pathAcl named: never a runtime-discovered rewrite target. */
+  declared: Set<string>;
+  declaring: boolean;
 }
 
 /** Tools that declare a pathAcl for their primary paths but intentionally resolve ADDITIONAL,
@@ -92,9 +95,28 @@ const als = new AsyncLocalStorage<AuditFrame>();
 export function runAudited<T>(opts: { tool: string; auditUses: boolean }, fn: () => T): T {
   if (!_enabled) return fn();
   return als.run(
-    { tool: opts.tool, auditUses: opts.auditUses, checked: new Map(), paths: new Map() },
+    {
+      tool: opts.tool,
+      auditUses: opts.auditUses,
+      checked: new Map(),
+      paths: new Map(),
+      declared: new Set(),
+      declaring: false,
+    },
     fn,
   );
+}
+
+/** Run the central pathAcl stage: every path checked inside `fn` is one the tool declared. */
+export function runDeclaring<T>(fn: () => T): T {
+  const frame = _enabled ? als.getStore() : undefined;
+  if (!frame) return fn();
+  frame.declaring = true;
+  try {
+    return fn();
+  } finally {
+    frame.declaring = false;
+  }
 }
 
 /** Record that `aclRel` passed a folder-ACL check (called from enforcePathAcl on success). */
@@ -106,6 +128,7 @@ export function recordAclCheck(op: AclOp, aclRel: string, abs: string): void {
   ops.add(op);
   frame.checked.set(aclRel, ops);
   frame.paths.set(abs, aclRel);
+  if (frame.declaring) frame.declared.add(aclRel);
 }
 
 export function recordPathOp(op: AclOp, abs: string): void {
@@ -116,8 +139,9 @@ export function recordPathOp(op: AclOp, abs: string): void {
   const checkedOps = [...(frame.checked.get(path) ?? [])];
   if (checkedOps.includes(op)) return;
   // Secondary backlink and reference rewrites intentionally touch runtime-discovered paths. Such
-  // a path carries no check, or only the read check the rewrite planner made on it.
-  const secondary = checkedOps.every((checked) => checked === "read");
+  // a path carries no check, or only the read check the rewrite planner made on it. A path the
+  // tool declared is a primary one, so a read-only declaration does not excuse writing it.
+  const secondary = !frame.declared.has(path) && checkedOps.every((checked) => checked === "read");
   if (op === "write" && secondary && CROSS_NOTE_REWRITE_TOOLS.has(frame.tool)) return;
   _collected.push({ tool: frame.tool, path, op, checkedOps });
   if (_strict)

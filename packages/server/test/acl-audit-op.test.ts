@@ -19,7 +19,7 @@ type Op = "write" | "delete";
 type Effect = "delete" | "write" | "move" | "replace" | "backlink";
 interface CallOpts {
   /** The operation declared for dest.md (a move's destination). */
-  destOp?: Op;
+  destOp?: Op | "read";
   /** The registered tool name: the audit exempts a move tool's writes to notes it only read. */
   tool?: string;
 }
@@ -127,6 +127,12 @@ describe("ACL audit: steps that are part of a permitted write", () => {
     setAclAuditMode("strict");
     expect((await call("delete", "backlink", { tool: "move_note" })).ok).toBe(true);
     expect(getCollectedViolations()).toHaveLength(0);
+  });
+  it("still reports a move tool writing a destination it declared only for read", async () => {
+    await call("delete", "move", { tool: "move_note", destOp: "read" });
+    expect(getCollectedViolations()).toEqual([
+      expect.objectContaining({ path: "dest.md", op: "write", checkedOps: ["read"] }),
+    ]);
   });
   it("still reports that rewrite from a tool that is not a move tool", async () => {
     await call("delete", "backlink");

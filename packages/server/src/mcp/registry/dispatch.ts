@@ -10,7 +10,7 @@ import { argsHash } from "../../hash";
 import { type OtelDetail, openDispatchSpans } from "../../otel/dispatch-spans";
 import { callerHash, type RateLimiter } from "../../throttle";
 import { checkAborted } from "../../util/abort";
-import { isCrossNoteAuditExempt, runAudited } from "../../vault/acl-audit";
+import { isCrossNoteAuditExempt, runAudited, runDeclaring } from "../../vault/acl-audit";
 import { NO_OUTPUT_TEXT } from "../no-output-text";
 import type { EffectiveToolVisibilityConfig } from "../visibility";
 import { isToolDisabledFor, runAuthorizationGates } from "./authorization-gates";
@@ -455,7 +455,7 @@ export async function runDispatch(
       },
       async () => {
         spans?.stage("acl_eval");
-        enforceCentralPathAcl(def, inputData, ctx, deps.rootResolver);
+        runDeclaring(() => enforceCentralPathAcl(def, inputData, ctx, deps.rootResolver));
         // THE-514: the last chance to bail before the handler — and any side effect — runs.
         // idemClaimed's claim is still pre-effect here, so the catch below deletes it cleanly.
         checkAborted(ctx.signal);
