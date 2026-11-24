@@ -58,9 +58,14 @@ describe("confirmation checked reads", () => {
   it("distinguishes an unknown link count at the ACL refusal", () => {
     writeFileSync(join(root, "unknown.md"), "x");
     mocked.unknownPath = join(root, "unknown.md");
-    expect(() => enforcePathAcl(undefined, "read", "unknown.md", root, [])).toThrow(
-      "refusing a file whose link count cannot be read",
-    );
+    let caught: unknown;
+    try {
+      enforcePathAcl(undefined, "read", "unknown.md", root, []);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ code: "acl_denied", details: { reason: "unknown_link_count" } });
+    expect((caught as Error).message).toContain("refusing a file whose link count cannot be read");
   });
   it("retains the hard-link ACL refusal", () => {
     writeFileSync(join(root, "original.md"), "x");

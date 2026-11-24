@@ -7,10 +7,10 @@ import { type Stats, statSync } from "node:fs";
 type LinkStat = (abs: string) => Pick<Stats, "isFile" | "nlink"> | undefined;
 
 /**
- * Must this target be refused as a possible alias of another inode? True for a regular file with
- * more than one link, and true when the link count cannot be read at all: an unknown count is not
- * a count of one. Only a target that is not there (a write that has not happened yet) is let
- * through, since it has no inode to alias.
+ * Why this target must be refused as a possible alias of another inode, or `null` when it need not
+ * be. `"hard_link"` for a regular file with more than one link; `"unknown_link_count"` when the
+ * count cannot be read at all, since an unknown count is not a count of one. Only a target that is
+ * not there (a write that has not happened yet) gets `null`, since it has no inode to alias.
  */
 export function hardLinkReason(
   abs: string,
