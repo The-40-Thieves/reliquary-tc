@@ -7,15 +7,14 @@
 // ack must not reveal which of the requested URIs the caller can read.
 
 import { describe, expect, it } from "vitest";
-import { buildResourceUri } from "../src/mcp/resources";
 import {
-  createResourceChangeBus,
   MAX_RESOURCE_SUBSCRIPTION_URIS,
-  type ResourceChangeEvent,
   requestedResourceSubscriptions,
   serveResourceSubscription,
   subscribesToResources,
 } from "../src/mcp/resource-subscriptions";
+import { buildResourceUri } from "../src/mcp/resources";
+import { createResourceChangeBus, type ResourceChangeEvent } from "../src/vault/note-changes";
 
 const ACK = "notifications/subscriptions/acknowledged";
 const UPDATED = "notifications/resources/updated";

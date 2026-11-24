@@ -39,6 +39,7 @@ import {
 import { indexAclIdentity } from "../search/indexing/acl-path-sync";
 import { buildRepresentationManifest, type RepresentationManifest } from "../search/representation";
 import { ensureVecChunks, type VecRebuildEvent } from "../search/vec";
+import type { ResourceChangeBus } from "../vault/note-changes";
 import { ACL_PATH_UNRESOLVED } from "../vault/stored-acl-path";
 import { registerVaultWatch } from "../vault/watcher";
 import {
@@ -298,6 +299,7 @@ export interface IndexCoordinatorDeps {
   isLeader?: () => boolean;
   /** Fires on every demote — drops pending watcher-originated coordinator ops. */
   onDemote?: (cb: (reason: string) => void) => void;
+  resourceChangeBus?: ResourceChangeBus;
 }
 
 export interface IndexCoordinatorWiring {
@@ -393,15 +395,26 @@ export function wireIndexCoordinator(deps: IndexCoordinatorDeps): IndexCoordinat
     (vaultId: string): ((rel: string) => boolean) =>
     (rel) =>
       indexReadableFor(vaultId)(aclRelFor(vaultId, rel) ?? rel);
+  const publishChange = (vaultId: string, path: string): void => {
+    try {
+      deps.resourceChangeBus?.publish({ vaultId, relPath: path });
+    } catch {}
+  };
   // THE-453 (runtime): a write-allowed but read-denied path (writePaths ⊃ readPaths) must not be
   // embedded — makeReindexGate routes it to submitDelete instead of submitWrite. Deletes are always
   // safe, so deindex stays a direct submitDelete.
-  const reindexHook = makeReindexGate(indexReadableByIdentity, {
+  const reindexGated = makeReindexGate(indexReadableByIdentity, {
     write: (vaultId, path, content) => indexCoordinator.submitWrite(vaultId, path, content),
     delete: (vaultId, path) => indexCoordinator.submitDelete(vaultId, path),
   });
-  const deindexHook = (vaultId: string, path: string): void =>
+  const reindexHook = (vaultId: string, path: string, content: string): void => {
+    publishChange(vaultId, path);
+    reindexGated(vaultId, path, content);
+  };
+  const deindexHook = (vaultId: string, path: string): void => {
+    publishChange(vaultId, path);
     indexCoordinator.submitDelete(vaultId, path);
+  };
   // F1 (fix round 2): a SEPARATE ACL-gated hook pair tagged "watcher" so a demote can cancel only
   // these pending ops (cancelOrigin), leaving an explicit tool write on the same key untouched.
   const watcherReindexHook = makeReindexGate(indexReadableByIdentity, {
@@ -421,9 +434,11 @@ export function wireIndexCoordinator(deps: IndexCoordinatorDeps): IndexCoordinat
   const isLeader = deps.isLeader ?? (() => true);
   const stopVaultWatch = registerVaultWatch(deps.vaults, deps.watch, {
     onUpsert: (vaultId, path, content) => {
+      publishChange(vaultId, path);
       if (isLeader()) watcherReindexHook(vaultId, path, content);
     },
     onDelete: (vaultId, path) => {
+      publishChange(vaultId, path);
       if (isLeader()) watcherDeindexHook(vaultId, path);
     },
     ...(deps.onVaultConfigChange

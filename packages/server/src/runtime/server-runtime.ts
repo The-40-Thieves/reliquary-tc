@@ -330,6 +330,7 @@ export async function buildServerRuntime(
     const { indexCoordinator, indexReadableFor, reindexHook, deindexHook, stopVaultWatch } =
       wireIndexCoordinator({
         db,
+        resourceChangeBus: vaultRegistry.changes,
         metrics,
         embeddingProvider,
         hasVec,

@@ -12,12 +12,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { type EmbeddingProvider, fakeEmbeddingProvider } from "../src/embeddings";
 import { MetricsRecorder } from "../src/metrics/registry";
-import {
-  createResourceChangeBus,
-  type ResourceChangeEvent,
-} from "../src/mcp/resource-subscriptions";
 import { type IndexHealthState, wireIndexCoordinator } from "../src/runtime/indexing-wiring";
-import { makeM2Vault, type M2Vault } from "./m2-helpers";
+import { createResourceChangeBus, type ResourceChangeEvent } from "../src/vault/note-changes";
+import { type M2Vault, makeM2Vault } from "./m2-helpers";
 
 const captured = vi.hoisted(() => ({
   onUpsert: undefined as undefined | ((vaultId: string, path: string, content: string) => void),

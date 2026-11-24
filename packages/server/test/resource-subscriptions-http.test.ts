@@ -12,17 +12,13 @@ import { SignJWT } from "jose";
 import { afterEach, describe, expect, it } from "vitest";
 import { FolderAcl } from "../src/acl";
 import {
-  createResourceChangeBus,
-  type ResourceChangeBus,
-} from "../src/mcp/resource-subscriptions";
-import {
   buildResourceUri,
   CATALOG_RESOURCE_URI,
   canReadResourceUri,
   RESOURCE_SCHEME,
 } from "../src/mcp/resources";
 import { type HttpHandle, startHttp } from "../src/transports/http";
-import { type TestVault, makeTestVault } from "./m1-helpers";
+import { makeTestVault, type TestVault } from "./m1-helpers";
 import { stallTimeout } from "./stall-timeouts";
 
 const SECRET = "test-only-secret-not-a-real-credential-0123456789";
@@ -53,7 +49,7 @@ function vault(): TestVault {
   return v;
 }
 
-async function boot(v: TestVault, bus: ResourceChangeBus): Promise<HttpHandle> {
+async function boot(v: TestVault): Promise<HttpHandle> {
   const auth = ServerConfigSchema.parse({
     vaults: [{ id: "test", path: v.root }],
     auth: { mode: "jwt", jwtSecret: SECRET, audience: "http://test", tokenTtlSeconds: 3600 },
@@ -69,7 +65,6 @@ async function boot(v: TestVault, bus: ResourceChangeBus): Promise<HttpHandle> {
     acl: new FolderAcl({ readOnly: false, defaultScopes: [], rules: [] }),
     host: "127.0.0.1",
     port: 0,
-    resourceChangeBus: bus,
   });
   handles.push(handle);
   return handle;
@@ -195,8 +190,8 @@ describe("resources/updated over HTTP (modern era)", () => {
     "(a) a caller with read access is acked, and an out-of-band publish reaches its stream for a note it can read",
     async () => {
       const v = vault();
-      const bus = createResourceChangeBus();
-      const handle = await boot(v, bus);
+      const bus = v.vaultRegistry.changes;
+      const handle = await boot(v);
       const s = await openListen(handle.port, await tokenFor(["*"]), [PUB], { id: 1 });
       try {
         expect(s.status).toBe(200);
@@ -222,8 +217,8 @@ describe("resources/updated over HTTP (modern era)", () => {
     "(b) a caller whose read ACL does not cover the note is acked with the URI echoed, gets no update for it, and a readable URI in the same subscription still arrives",
     async () => {
       const v = vault();
-      const bus = createResourceChangeBus();
-      const handle = await boot(v, bus);
+      const bus = v.vaultRegistry.changes;
+      const handle = await boot(v);
       // "*" grants read:notes, so the refusal here is the folder ACL alone.
       const s = await openListen(handle.port, await tokenFor(["*"]), [SECRET_NOTE, PUB], {
         id: 2,
@@ -251,8 +246,8 @@ describe("resources/updated over HTTP (modern era)", () => {
     "(c) a caller WITHOUT the read:notes scope is acked and gets no update, while a control stream holding read:notes does",
     async () => {
       const v = vault();
-      const bus = createResourceChangeBus();
-      const handle = await boot(v, bus);
+      const bus = v.vaultRegistry.changes;
+      const handle = await boot(v);
       const scoped = await openListen(handle.port, await tokenFor(["write:notes"]), [PUB], {
         id: 3,
       });
@@ -284,8 +279,8 @@ describe("resources/updated over HTTP (modern era)", () => {
       // ordinary legacy handling. This test asserts only what the wire must NOT carry: our ack
       // echoing the URI, and our update frame.
       const v = vault();
-      const bus = createResourceChangeBus();
-      const handle = await boot(v, bus);
+      const bus = v.vaultRegistry.changes;
+      const handle = await boot(v);
       const s = await openListen(handle.port, await tokenFor(["*"]), [PUB], {
         modern: false,
         id: 5,
@@ -349,12 +344,7 @@ describe("resources/updated over HTTP (modern era)", () => {
       },
       {
         label: "unauthenticated caller",
-        result: canReadResourceUri(
-          v.vaultRegistry,
-          v.ctx({ authenticated: false }),
-          PUB,
-          aclFor,
-        ),
+        result: canReadResourceUri(v.vaultRegistry, v.ctx({ authenticated: false }), PUB, aclFor),
       },
       {
         label: "caller without read:notes",
@@ -373,5 +363,9 @@ describe("resources/updated over HTTP (modern era)", () => {
     }
     expect(checked).toBe(refused.length);
     expect(checked).toBeGreaterThanOrEqual(7);
+  });
+
+  it("each test vault has its own change bus", () => {
+    expect(vault().vaultRegistry.changes).not.toBe(vault().vaultRegistry.changes);
   });
 });
