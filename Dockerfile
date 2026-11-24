@@ -92,8 +92,8 @@ RUN (cd packages/embedder-local && rm -rf node_modules && bun install --frozen-l
 # THIRD-PARTY-LICENSES.txt for the image: the server build's packages plus every package in the two
 # node_modules folders the runtime stage copies. The build fails when one of them has no licence
 # text or a licence that is not accepted (scripts/lib/image-license-file.mjs).
-RUN bun scripts/write-image-license-file.mjs --out /out/THIRD-PARTY-LICENSES.txt \
-      --tree /out/node_modules --tree packages/embedder-local/node_modules
+RUN bun scripts/write-image-license-file.mjs \
+      --tree /out/node_modules --tree packages/embedder-local/node_modules > /out/THIRD-PARTY-LICENSES.txt
 
 # ---- runtime: bun + ca-certs + the server dist only ----
 FROM oven/bun:1.4.4-slim AS runtime

@@ -7,12 +7,13 @@
 //   bun scripts/write-native-license-file.mjs           write the file
 //   bun scripts/write-native-license-file.mjs --check   fail if the committed file is out of date
 //
-// Needs cargo, and the network the first time (cargo fetches the crate sources it reads).
+// Needs cargo, and the network the first time (cargo fetches the crate sources it reads). cargo is
+// run from CARGO_HOME (~/.cargo by default); set CARGO to its full path when it lives elsewhere.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { OVERRIDES_DIR } from "./lib/binary-license-file.mjs";
-import { buildCrateLicenseText } from "./lib/crate-license-file.mjs";
+import { buildCrateLicenseText, cargoPath } from "./lib/crate-license-file.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const nativeDir = join(repoRoot, "packages", "native");
@@ -20,7 +21,7 @@ const outFile = join(nativeDir, "THIRD-PARTY-LICENSES.txt");
 const REGENERATE = "bun scripts/write-native-license-file.mjs";
 
 function expectedText() {
-  const metadata = execFileSync("cargo", ["metadata", "--format-version", "1", "--locked"], {
+  const metadata = execFileSync(cargoPath(), ["metadata", "--format-version", "1", "--locked"], {
     cwd: nativeDir,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,

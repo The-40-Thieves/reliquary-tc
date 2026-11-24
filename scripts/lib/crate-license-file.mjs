@@ -7,7 +7,8 @@
 // platform is selected: the file covers every target the module is built for, and one platform's
 // build holds a subset.
 import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
 import {
   ACCEPTED_LICENSES,
   licenseTextsIn,
@@ -17,6 +18,20 @@ import {
 } from "./third-party-licenses.mjs";
 
 export const NATIVE_LICENSE_FILE = "THIRD-PARTY-LICENSES.txt";
+
+/**
+ * The full path of cargo, so running it never depends on what a PATH entry holds: `CARGO` when it
+ * is set (it must be a full path), otherwise the copy rustup installs under `CARGO_HOME`.
+ */
+export function cargoPath(env = process.env) {
+  const exe = process.platform === "win32" ? "cargo.exe" : "cargo";
+  if (env.CARGO && !isAbsolute(env.CARGO))
+    throw new Error(`CARGO must be a full path to cargo, got "${env.CARGO}"`);
+  const path = env.CARGO ?? join(env.CARGO_HOME ?? join(homedir(), ".cargo"), "bin", exe);
+  if (!existsSync(path))
+    throw new Error(`cargo was not found at ${path}. Set CARGO to its full path.`);
+  return path;
+}
 
 /**
  * Put the module's licence file into every per-platform package folder under `<nativeDir>/npm`
