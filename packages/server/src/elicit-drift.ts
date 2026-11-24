@@ -7,9 +7,10 @@
 // `requireConfirmation`, and `verifyAndConsumeElicit`/`hitlSatisfiedByState` beneath them.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { err } from "@the-40-thieves/reliquary-tc-shared";
+import { readdirSync, statSync } from "node:fs";
+import { err, ReliquaryTcError } from "@the-40-thieves/reliquary-tc-shared";
 import { argsHash } from "./hash";
+import { readFileChecked } from "./vault/notes-io";
 import { normalizeVaultPath, resolveVaultPath } from "./vault/paths";
 
 /** Computes the CURRENT fingerprint of a call's targets, or null when there is nothing to bind
@@ -57,8 +58,9 @@ function entryState(abs: string): string {
     }
     if (!st.isFile()) return `other:${meta}`;
     if (st.size > MAX_HASHED_BYTES) return `big:${meta}`;
-    return `file:${sha256(readFileSync(abs))}:${meta}`;
+    return `file:${sha256(readFileChecked(abs))}:${meta}`;
   } catch (e) {
+    if (e instanceof ReliquaryTcError) throw e;
     throw unfingerprintable("read failed", e);
   }
 }
