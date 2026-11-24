@@ -9,7 +9,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import { join } from "node:path";
 import { ORT_NOTE, OVERRIDE_ALIASES, OVERRIDES_DIR } from "./binary-license-file.mjs";
 import { sourceMapInputs } from "./server-dist-license-file.mjs";
-import { buildLicenseFile, collectThirdParty } from "./third-party-licenses.mjs";
+import { buildLicenseFile, byCodeUnit, collectThirdParty } from "./third-party-licenses.mjs";
 
 /** The project's own packages are covered by its LICENSE and NOTICE, not listed as third-party. */
 const OWN_SCOPE = "@the-40-thieves/";
@@ -57,18 +57,20 @@ function visitPackage(dir, found, seen) {
 }
 
 function walkStore(store, found, seen) {
-  for (const entry of readdirSync(store).sort()) {
+  for (const entry of readdirSync(store).sort(byCodeUnit)) {
     walkModules(join(store, entry, "node_modules"), found, seen);
   }
 }
 
 function walkScope(scope, found, seen) {
-  for (const entry of readdirSync(scope).sort()) visitPackage(join(scope, entry), found, seen);
+  for (const entry of readdirSync(scope).sort(byCodeUnit)) {
+    visitPackage(join(scope, entry), found, seen);
+  }
 }
 
 function walkModules(modules, found, seen) {
   if (!isDir(modules)) return;
-  for (const entry of readdirSync(modules).sort()) {
+  for (const entry of readdirSync(modules).sort(byCodeUnit)) {
     const path = join(modules, entry);
     // Bun's isolated installs keep every package under .bun/<name>@<version>/node_modules.
     if (entry === ".bun") walkStore(path, found, seen);

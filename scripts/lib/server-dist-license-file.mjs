@@ -7,7 +7,7 @@
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { OVERRIDE_ALIASES, OVERRIDES_DIR } from "./binary-license-file.mjs";
-import { buildLicenseFile, collectThirdParty } from "./third-party-licenses.mjs";
+import { buildLicenseFile, byCodeUnit, collectThirdParty } from "./third-party-licenses.mjs";
 
 export const DIST_LICENSE_FILE = "THIRD-PARTY-LICENSES.txt";
 
@@ -26,7 +26,7 @@ const INSTALLED_NOTE =
 export function sourceMapInputs(distDir) {
   const bundles = readdirSync(distDir)
     .filter((name) => name.endsWith(".js"))
-    .sort();
+    .sort(byCodeUnit);
   if (bundles.length === 0) throw new Error(`licence list: no built .js in ${distDir}`);
   const inputs = [];
   for (const name of bundles) {

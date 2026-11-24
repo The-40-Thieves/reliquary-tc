@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import {
   buildLicenseFile,
+  byCodeUnit,
   collectThirdParty,
   overrideFileName,
   packageDirsFromInputs,
@@ -280,4 +281,17 @@ test("any problem stops the file from being written, and the error lists every o
     (e) =>
       /bare@1\.0\.0 ships no licence text/.test(e.message) && /copyleft@1\.0\.0/.test(e.message),
   );
+});
+
+test("byCodeUnit orders by code unit, the same on every machine", () => {
+  // Upper case before "_" before lower case, and "a" before "ä": a locale order would differ.
+  assert.deepEqual(["a", "ä", "_", "B", "@s/x", "b"].sort(byCodeUnit), [
+    "@s/x",
+    "B",
+    "_",
+    "a",
+    "b",
+    "ä",
+  ]);
+  assert.equal(byCodeUnit("x", "x"), 0);
 });
