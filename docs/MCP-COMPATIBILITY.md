@@ -127,19 +127,19 @@ This server attaches the structured error object as `structuredContent` alongsid
 (the SEP-1303 row above). That is deliberate, documented, and asserted by
 `tool-surface-2025.test.ts`. **A strict client may nonetheless replace our error with its own.**
 
-The TypeScript SDK client this repo's tests use — `@modelcontextprotocol/sdk` **1.32.1**, the
-version `bun.lock` resolves (a dev dependency; `docgen:facts-check` pins this number) — is
-believed to implement the `isError` exemption on only one of the two paths in
+The TypeScript SDK client this repo's tests use — `@modelcontextprotocol/sdk` **1.32.2**, the
+version `bun.lock` resolves (a dev dependency; `docgen:facts-check` pins this number) —
+implements the `isError` exemption on only one of the two paths in
 `dist/esm/client/index.js`:
 
 ```js
-// :499  comment states the rule
+// :488  comment states the rule
 // If tool has outputSchema, it MUST return structuredContent (unless it's an error)
-// :500  presence check — correctly exempts errors
+// :489  presence check — correctly exempts errors
 if (!result.structuredContent && !result.isError) { ... }
-// :504  validation — the exemption is MISSING here
+// :493  validation — the exemption is MISSING here
 if (result.structuredContent) {
-    const validationResult = validator(result.structuredContent);   // :507
+    const validationResult = validator(result.structuredContent);   // :496
     // throws McpError(InvalidParams) when the error object does not match the SUCCESS outputSchema
 }
 ```
@@ -152,7 +152,7 @@ this server's registered tools declares an `outputSchema`, so no tool is exempt 
 The same SDK's *server* half (`dist/esm/server/mcp.js`, `validateToolOutput`) does short-circuit on
 `result.isError`, so this is a half-implemented exemption rather than a deliberate design.
 Upstream fix: [typescript-sdk#1945](https://github.com/modelcontextprotocol/typescript-sdk/pull/1945) —
-open and unreleased when this was written (2026-08-14).
+open and unreleased on 2026-08-14, and closed without merging when re-checked on 2026-11-21.
 
 **Why the server does not work around it.** Dropping `structuredContent` from error results would
 make this a client-side non-issue, and it was considered and rejected: it retracts a documented
@@ -163,9 +163,10 @@ Trading a real capability for a workaround to someone else's half-applied exempt
 of the two. Recorded here so that a downstream caller who sees `-32602` where they expected a
 typed error can identify it in one read.
 
-Scope, in this page's usual terms: verified on 2026-08-14 by reading the files of the SDK version
-`bun.lock` resolved then (1.29.0; the excerpt above is from it), and by reading the upstream PR.
-**Not re-read** against the currently locked version, so "believed to" above is deliberate. **Not** verified against a live client, and
+Scope, in this page's usual terms: first verified on 2026-08-14 against 1.29.0, and re-read on
+2026-11-21 against 1.32.2, the version `bun.lock` resolves; the excerpt and line numbers above are
+from 1.32.2, where both the client path and the server's `validateToolOutput` short-circuit are
+unchanged. **Not** verified against a live client, and
 **not** confirmed either way for the 2.x SDK line — that checkout has a different layout and the
 check was inconclusive, which is reported rather than guessed.
 
