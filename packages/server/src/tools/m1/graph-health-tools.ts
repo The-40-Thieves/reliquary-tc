@@ -123,6 +123,7 @@ const AuditProvenanceOutput = z.object({
   vault: z.string(),
   field: z.string(),
   field_aliases: z.record(z.string(), z.string()).optional(),
+  field_aliases_count: z.number().optional(),
   scanned: z.number(),
   with_provenance: z.number(),
   missing_provenance: z.number(),
@@ -418,7 +419,7 @@ export function buildGraphHealthTools(deps: M1Deps): ToolDefinition[] {
       name: "audit_provenance",
       domain: "knowledge",
       description:
-        "Provenance audit: flag claim-bearing notes that lack a 'sources' frontmatter field and cite nothing in the body; by default, 'source' and 'references' also count. A note with no sources field but a URL, a footnote definition or a Sources/References section with a list or link is reported as cited in body only (body_only), not missing. Reports coverage of sources/confidence/verified across the readable note set. Read-only. Excludes daily notes, templates, and index files by default; tune scope with include/exclude globs, the field name, and types (only notes whose frontmatter type matches are claim-bearing; the rest are counted in skipped_by_type). response_format=concise drops the field echo, with_provenance and the by_folder breakdown.",
+        "Provenance audit: flag claim-bearing notes with no 'sources' frontmatter (by default 'source' or 'references' also count) and nothing cited in the body. A note with no sources field but a URL, a footnote definition or a Sources/References section with a list or link is reported as cited in body only (body_only), not missing. Reports coverage of sources/confidence/verified across the readable note set. Read-only. Excludes daily notes, templates, and index files by default; tune scope with include/exclude globs, the field name, and types (only notes whose frontmatter type matches are claim-bearing; the rest are counted in skipped_by_type). response_format=concise drops the field echo, with_provenance and the by_folder breakdown.",
       inputSchema: z
         .object({
           vault: VaultId,
@@ -460,8 +461,13 @@ export function buildGraphHealthTools(deps: M1Deps): ToolDefinition[] {
         const { scanned, withField, withConfidence, withVerified, missing, bodyOnly } = scan;
         const { byFolder, skippedByType } = scan;
         const field = input.field ?? "sources";
-        const aliases = Object.keys(scan.fieldAliases).length
-          ? { field_aliases: scan.fieldAliases }
+        // Capped by `limit` like `missing` and `body_only`; the count says how many there were.
+        const aliasRows = Object.entries(scan.fieldAliases);
+        const aliases = aliasRows.length
+          ? {
+              field_aliases: Object.fromEntries(aliasRows.slice(0, input.limit)),
+              field_aliases_count: aliasRows.length,
+            }
           : {};
         const round = (n: number): number => Number(n.toFixed(3));
         const bodyFields = {

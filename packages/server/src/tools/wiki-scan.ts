@@ -398,6 +398,17 @@ export function* scanProvenanceSteps(
       !isRaw(p),
   );
   const types = opts.types ? new Set(opts.types) : undefined;
+  // Notes in one folder share their conventions, so the type key is resolved once per folder.
+  const typeKeys = new Map<string, string>();
+  const typeKeyFor = (vaultId: string, rel: string): string => {
+    const dir = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
+    let key = typeKeys.get(dir);
+    if (key === undefined) {
+      key = resolveConventions({ ...scope, vaultId }, rel).typeKey;
+      typeKeys.set(dir, key);
+    }
+    return key;
+  };
   const byFolder = new Map<string, { scanned: number; missing: number }>();
   const missing: string[] = [];
   const fieldAliases: Record<string, string> = {};
@@ -415,10 +426,7 @@ export function* scanProvenanceSteps(
     }
     const parsed = warnings.parse(raw, rel);
     const fm = parsed.frontmatter;
-    const typeKey =
-      types && scope.vaultId
-        ? resolveConventions({ ...scope, vaultId: scope.vaultId }, rel).typeKey
-        : "type";
+    const typeKey = types && scope.vaultId ? typeKeyFor(scope.vaultId, rel) : "type";
     if (types && !typeMatches(fm, types, typeKey)) {
       skippedByType++;
       yield;
