@@ -42,16 +42,16 @@ vi.mock("../src/vault/watcher", async (importOriginal) => {
 
 function health(): IndexHealthState {
   return {
-    reconcile: "ok",
-    reconcileAt: 0,
-    reconcileErrors: [],
-    writeFailures: 0,
-    frontmatterFailures: new Map(),
-    notesReady: true,
-    auditWriteFailures: 0,
-    indexQueueBackpressures: 0,
-    lastChunksUpserted: null,
     inFlight: null,
+    lastChunksUpserted: null,
+    indexQueueBackpressures: 0,
+    auditWriteFailures: 0,
+    notesReady: true,
+    frontmatterFailures: new Map(),
+    writeFailures: 0,
+    reconcileErrors: [],
+    reconcileAt: 0,
+    reconcile: "ok",
   };
 }
 

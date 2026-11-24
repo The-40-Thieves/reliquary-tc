@@ -332,6 +332,7 @@ export function canReadResourceUri(
     const v = vaultRegistry.resolve(vaultId);
     const rel = normalizeVaultPath(relPath);
     enforcePathAcl(aclOfVault(ctx, vaultId, aclFor), "read", rel, v.root, ctx.grantedScopes);
+    resolveVaultPath(v.root, rel);
     return { vaultId, relPath: rel };
   } catch {
     return null;

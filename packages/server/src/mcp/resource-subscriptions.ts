@@ -30,6 +30,73 @@ export function subscribesToResources(body: unknown): boolean {
 }
 
 const SUBSCRIPTION_ID = "io.modelcontextprotocol/subscriptionId";
+const encoder = new TextEncoder();
+
+type Target = { vaultId: string; relPath: string } | null;
+
+function refuseTooMany(count: number, id: string | number | null): Response {
+  return new Response(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      error: {
+        code: -32602,
+        message: `resource subscription names ${count} URIs; the limit is ${MAX_RESOURCE_SUBSCRIPTION_URIS}`,
+      },
+      id,
+    }),
+    { status: 400, headers: { "content-type": "application/json" } },
+  );
+}
+
+/** Write one SSE frame. A client that hung up between the check and the write is not an error. */
+function sendFrame(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  frame: Record<string, unknown>,
+): void {
+  try {
+    controller.enqueue(encoder.encode(`event: message\ndata: ${JSON.stringify(frame)}\n\n`));
+  } catch {
+    /* the client hung up between the check and the write */
+  }
+}
+
+interface OpenStream {
+  controller: ReadableStreamDefaultController<Uint8Array>;
+  bus: ResourceChangeBus;
+  canRead: (uri: string) => Target;
+  uris: string[];
+  distinct: string[];
+  id: string | number | null;
+}
+
+/** Ack every URI, then send an update per event whose note `canRead` names. Returns the unsubscribe. */
+function openStream(s: OpenStream): () => void {
+  sendFrame(s.controller, {
+    jsonrpc: "2.0",
+    method: "notifications/subscriptions/acknowledged",
+    params: {
+      notifications: { resourceSubscriptions: s.uris },
+      _meta: { [SUBSCRIPTION_ID]: s.id },
+    },
+  });
+  return s.bus.onChange((event) => {
+    for (const uri of s.distinct) {
+      let target: Target = null;
+      try {
+        target = s.canRead(uri);
+      } catch {
+        target = null;
+      }
+      if (!target) continue;
+      if (target.vaultId !== event.vaultId || target.relPath !== event.relPath) continue;
+      sendFrame(s.controller, {
+        jsonrpc: "2.0",
+        method: "notifications/resources/updated",
+        params: { uri, _meta: { [SUBSCRIPTION_ID]: s.id } },
+      });
+    }
+  });
+}
 
 /**
  * Serve the resource-update stream. Refuses more than MAX_RESOURCE_SUBSCRIPTION_URIS URIs with a
@@ -43,61 +110,17 @@ const SUBSCRIPTION_ID = "io.modelcontextprotocol/subscriptionId";
 export function serveResourceSubscription(
   body: unknown,
   bus: ResourceChangeBus,
-  canRead: (uri: string) => { vaultId: string; relPath: string } | null,
+  canRead: (uri: string) => Target,
   signal: AbortSignal,
 ): Response {
   const id = (body as { id?: string | number | null } | null)?.id ?? null;
   const uris = requestedResourceSubscriptions(body) ?? [];
-  if (uris.length > MAX_RESOURCE_SUBSCRIPTION_URIS) {
-    return new Response(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        error: {
-          code: -32602,
-          message: `resource subscription names ${uris.length} URIs; the limit is ${MAX_RESOURCE_SUBSCRIPTION_URIS}`,
-        },
-        id,
-      }),
-      { status: 400, headers: { "content-type": "application/json" } },
-    );
-  }
+  if (uris.length > MAX_RESOURCE_SUBSCRIPTION_URIS) return refuseTooMany(uris.length, id);
   // A URI listed twice gets one update per event, not two.
   const distinct = [...new Set(uris)];
-  const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const send = (frame: Record<string, unknown>) => {
-        try {
-          controller.enqueue(encoder.encode(`event: message\ndata: ${JSON.stringify(frame)}\n\n`));
-        } catch {
-          /* the client hung up between the check and the write */
-        }
-      };
-      send({
-        jsonrpc: "2.0",
-        method: "notifications/subscriptions/acknowledged",
-        params: {
-          notifications: { resourceSubscriptions: uris },
-          _meta: { [SUBSCRIPTION_ID]: id },
-        },
-      });
-      const unsubscribe = bus.onChange((event) => {
-        for (const uri of distinct) {
-          let target: { vaultId: string; relPath: string } | null = null;
-          try {
-            target = canRead(uri);
-          } catch {
-            target = null;
-          }
-          if (!target) continue;
-          if (target.vaultId !== event.vaultId || target.relPath !== event.relPath) continue;
-          send({
-            jsonrpc: "2.0",
-            method: "notifications/resources/updated",
-            params: { uri, _meta: { [SUBSCRIPTION_ID]: id } },
-          });
-        }
-      });
+      const unsubscribe = openStream({ controller, bus, canRead, uris, distinct, id });
       const close = () => {
         unsubscribe();
         try {

@@ -7,6 +7,10 @@
 // case that asserts silence also asserts delivery on the same stream, and checks the silent publish
 // first, so a late delivery cannot be mistaken for silence.
 
+import { randomBytes } from "node:crypto";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ServerConfigSchema } from "@the-40-thieves/reliquary-tc-shared";
 import { SignJWT } from "jose";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,16 +21,17 @@ import {
   canReadResourceUri,
   RESOURCE_SCHEME,
 } from "../src/mcp/resources";
-import { type HttpHandle, startHttp } from "../src/transports/http";
+import { createHttpApp, type HttpApp } from "../src/transports/http";
 import { makeTestVault, type TestVault } from "./m1-helpers";
 import { stallTimeout } from "./stall-timeouts";
 
-const SECRET = "test-only-secret-not-a-real-credential-0123456789";
+const signingKey = randomBytes(32).toString("hex");
 const MODERN = "2026-07-28";
 const LEGACY = "2025-11-25";
 const ACK = "notifications/subscriptions/acknowledged";
 const UPDATED = "notifications/resources/updated";
 const SUB_KEY = "io.modelcontextprotocol/subscriptionId";
+const LISTEN_URL = "http://localhost/mcp";
 
 type Frame = { jsonrpc: string; method?: string; params?: any; id?: unknown; error?: unknown };
 
@@ -37,9 +42,9 @@ const SECRET_NOTE = buildResourceUri("test", "secret/b.md");
 // The vault's own ACL: only pub/** is readable. Root ACL is permissive; the per-vault override is
 // what canRead must honour (registry.aclFor), exactly as resources/read does.
 const vaults: TestVault[] = [];
-const handles: HttpHandle[] = [];
+const apps: HttpApp[] = [];
 afterEach(async () => {
-  for (const h of handles.splice(0)) await h.close();
+  for (const a of apps.splice(0)) await a.close();
   for (const v of vaults.splice(0)) v.cleanup();
 });
 
@@ -49,32 +54,36 @@ function vault(): TestVault {
   return v;
 }
 
-async function boot(v: TestVault): Promise<HttpHandle> {
+function boot(v: TestVault): HttpApp {
   const auth = ServerConfigSchema.parse({
     vaults: [{ id: "test", path: v.root }],
-    auth: { mode: "jwt", jwtSecret: SECRET, audience: "http://test", tokenTtlSeconds: 3600 },
+    auth: { mode: "jwt", jwtSecret: signingKey, audience: "http://test", tokenTtlSeconds: 3600 },
   }).auth;
-  const handle = await startHttp({
-    name: "reliquary-tc",
-    version: "0.0.0-test",
-    registry: v.registry,
+  const app = createHttpApp({
     vaultRegistry: v.vaultRegistry,
-    auth,
-    db: v.db,
     vaultId: "test",
     acl: new FolderAcl({ readOnly: false, defaultScopes: [], rules: [] }),
-    host: "127.0.0.1",
-    port: 0,
+    db: v.db,
+    auth,
+    registry: v.registry,
+    version: "0.0.0-test",
+    name: "reliquary-tc",
   });
-  handles.push(handle);
-  return handle;
+  apps.push(app);
+  return app;
+}
+
+/** A fresh vault with its app, and the change bus the test publishes on. */
+function startVault() {
+  const v = vault();
+  return { bus: v.vaultRegistry.changes, app: boot(v) };
 }
 
 async function tokenFor(scopes: string[]): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   return new SignJWT({ sub: "agent-1", scopes, aud: "http://test", iat: now, exp: now + 600 })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
-    .sign(new TextEncoder().encode(SECRET));
+    .sign(new TextEncoder().encode(signingKey));
 }
 
 interface Listen {
@@ -89,16 +98,31 @@ interface Listen {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Open a `subscriptions/listen` for `uris` and read its stream in the background. `modern: false`
- *  sends the same request without the modern protocol header and `_meta` envelope. */
-async function openListen(
-  port: number,
-  jwt: string,
-  uris: string[],
-  opts: { modern?: boolean; id?: number } = {},
-): Promise<Listen> {
-  const modern = opts.modern !== false;
-  const ac = new AbortController();
+async function waitForFrames(
+  frames: Frame[],
+  pred: (frames: Frame[]) => boolean,
+  ms = 3000,
+): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (pred(frames)) return true;
+    await sleep(20);
+  }
+  return pred(frames);
+}
+
+function listenHeaders(jwt: string, modern: boolean): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+    authorization: `Bearer ${jwt}`,
+    host: "localhost",
+    "mcp-protocol-version": modern ? MODERN : LEGACY,
+    ...(modern ? { "mcp-method": "subscriptions/listen" } : {}),
+  };
+}
+
+function listenBody(uris: string[], modern: boolean, id: number): string {
   const params: Record<string, unknown> = { notifications: { resourceSubscriptions: uris } };
   if (modern) {
     params._meta = {
@@ -107,78 +131,77 @@ async function openListen(
       "io.modelcontextprotocol/clientCapabilities": {},
     };
   }
-  const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+  return JSON.stringify({ jsonrpc: "2.0", id, method: "subscriptions/listen", params });
+}
+
+/** Parse every complete SSE block in `buf` into `frames`; returns the unparsed tail. */
+function takeFrames(buf: string, frames: Frame[]): string {
+  let cut = buf.indexOf("\n\n");
+  while (cut >= 0) {
+    const block = buf.slice(0, cut);
+    buf = buf.slice(cut + 2);
+    for (const line of block.split("\n")) {
+      if (!line.startsWith("data: ")) continue;
+      try {
+        frames.push(JSON.parse(line.slice(6)) as Frame);
+      } catch {
+        /* a partial frame cannot happen here: blocks are cut on the blank line */
+      }
+    }
+    cut = buf.indexOf("\n\n");
+  }
+  return buf;
+}
+
+async function readFrames(res: Response, out: Listen): Promise<void> {
+  const reader = res.body?.getReader();
+  if (!reader) return;
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      out.raw += chunk;
+      buf = takeFrames(buf + chunk, out.frames);
+    }
+  } catch {
+    /* aborted by stop(), or the server closed the connection */
+  }
+}
+
+/** Open a `subscriptions/listen` for `uris` and read its stream in the background. `modern: false`
+ *  sends the same request without the modern protocol header and `_meta` envelope. */
+async function openListen(
+  app: HttpApp,
+  jwt: string,
+  uris: string[],
+  opts: { modern?: boolean; id?: number } = {},
+): Promise<Listen> {
+  const modern = opts.modern !== false;
+  const ac = new AbortController();
+  const res = await app.app.request(LISTEN_URL, {
     method: "POST",
     signal: ac.signal,
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      authorization: `Bearer ${jwt}`,
-      "mcp-protocol-version": modern ? MODERN : LEGACY,
-      ...(modern ? { "mcp-method": "subscriptions/listen" } : {}),
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: opts.id ?? 1,
-      method: "subscriptions/listen",
-      params,
-    }),
+    headers: listenHeaders(jwt, modern),
+    body: listenBody(uris, modern, opts.id ?? 1),
   });
+  let ended = false;
   const out: Listen = {
     status: res.status,
     frames: [],
     raw: "",
     ended: () => ended,
-    waitFor: async (pred, ms = 3000) => {
-      const end = Date.now() + ms;
-      while (Date.now() < end) {
-        if (pred(out.frames)) return true;
-        await sleep(20);
-      }
-      return pred(out.frames);
-    },
+    waitFor: (pred, ms) => waitForFrames(out.frames, pred, ms),
     stop: async () => {
       ac.abort();
       await pump;
     },
   };
-  let ended = false;
-  const pump = (async () => {
-    const reader = res.body?.getReader();
-    if (!reader) {
-      ended = true;
-      return;
-    }
-    const decoder = new TextDecoder();
-    let buf = "";
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        out.raw += chunk;
-        buf += chunk;
-        let cut = buf.indexOf("\n\n");
-        while (cut >= 0) {
-          const block = buf.slice(0, cut);
-          buf = buf.slice(cut + 2);
-          for (const line of block.split("\n")) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              out.frames.push(JSON.parse(line.slice(6)) as Frame);
-            } catch {
-              /* a partial frame cannot happen here: blocks are cut on the blank line */
-            }
-          }
-          cut = buf.indexOf("\n\n");
-        }
-      }
-    } catch {
-      /* aborted by stop(), or the server closed the connection */
-    } finally {
-      ended = true;
-    }
-  })();
+  const pump = readFrames(res, out).finally(() => {
+    ended = true;
+  });
   return out;
 }
 
@@ -189,10 +212,8 @@ describe("resources/updated over HTTP (modern era)", () => {
   it(
     "(a) a caller with read access is acked, and an out-of-band publish reaches its stream for a note it can read",
     async () => {
-      const v = vault();
-      const bus = v.vaultRegistry.changes;
-      const handle = await boot(v);
-      const s = await openListen(handle.port, await tokenFor(["*"]), [PUB], { id: 1 });
+      const { bus, app } = startVault();
+      const s = await openListen(app, await tokenFor(["*"]), [PUB], { id: 1 });
       try {
         expect(s.status).toBe(200);
         expect(await s.waitFor((fs) => fs.some(isAck))).toBe(true);
@@ -216,11 +237,9 @@ describe("resources/updated over HTTP (modern era)", () => {
   it(
     "(b) a caller whose read ACL does not cover the note is acked with the URI echoed, gets no update for it, and a readable URI in the same subscription still arrives",
     async () => {
-      const v = vault();
-      const bus = v.vaultRegistry.changes;
-      const handle = await boot(v);
+      const { bus, app } = startVault();
       // "*" grants read:notes, so the refusal here is the folder ACL alone.
-      const s = await openListen(handle.port, await tokenFor(["*"]), [SECRET_NOTE, PUB], {
+      const s = await openListen(app, await tokenFor(["*"]), [SECRET_NOTE, PUB], {
         id: 2,
       });
       try {
@@ -245,13 +264,11 @@ describe("resources/updated over HTTP (modern era)", () => {
   it(
     "(c) a caller WITHOUT the read:notes scope is acked and gets no update, while a control stream holding read:notes does",
     async () => {
-      const v = vault();
-      const bus = v.vaultRegistry.changes;
-      const handle = await boot(v);
-      const scoped = await openListen(handle.port, await tokenFor(["write:notes"]), [PUB], {
+      const { bus, app } = startVault();
+      const scoped = await openListen(app, await tokenFor(["write:notes"]), [PUB], {
         id: 3,
       });
-      const control = await openListen(handle.port, await tokenFor(["*"]), [PUB], { id: 4 });
+      const control = await openListen(app, await tokenFor(["*"]), [PUB], { id: 4 });
       try {
         expect(await scoped.waitFor((fs) => fs.some(isAck))).toBe(true);
         expect(await control.waitFor((fs) => fs.some(isAck))).toBe(true);
@@ -278,10 +295,8 @@ describe("resources/updated over HTTP (modern era)", () => {
       // interception requires mcp-protocol-version === 2026-07-28), so it falls through to the SDK's
       // ordinary legacy handling. This test asserts only what the wire must NOT carry: our ack
       // echoing the URI, and our update frame.
-      const v = vault();
-      const bus = v.vaultRegistry.changes;
-      const handle = await boot(v);
-      const s = await openListen(handle.port, await tokenFor(["*"]), [PUB], {
+      const { bus, app } = startVault();
+      const s = await openListen(app, await tokenFor(["*"]), [PUB], {
         modern: false,
         id: 5,
       });
@@ -302,7 +317,7 @@ describe("resources/updated over HTTP (modern era)", () => {
     stallTimeout(30_000),
   );
 
-  it("(e) canReadResourceUri: the normalized target for a readable note, null for every refusal", () => {
+  it("(e) canReadResourceUri: the normalized target for a readable note, including one not yet on disk", () => {
     const v = vault();
     const aclFor = (id: string) => v.registry.aclFor(id);
     const ctx = v.ctx();
@@ -315,45 +330,28 @@ describe("resources/updated over HTTP (modern era)", () => {
       aclFor,
     );
     expect(readable).toEqual({ vaultId: "test", relPath: "pub/new.md" });
+  });
 
+  it("(e) canReadResourceUri: null for every refusal", () => {
+    const v = vault();
+    const aclFor = (id: string) => v.registry.aclFor(id);
+    const ctx = v.ctx();
+
+    const at = (uri: string, caller = ctx) =>
+      canReadResourceUri(v.vaultRegistry, caller, uri, aclFor);
     const refused: Array<{ label: string; result: unknown }> = [
-      {
-        label: "denied path (folder ACL)",
-        result: canReadResourceUri(v.vaultRegistry, ctx, SECRET_NOTE, aclFor),
-      },
-      {
-        label: "catalog URI (not subscribable)",
-        result: canReadResourceUri(v.vaultRegistry, ctx, CATALOG_RESOURCE_URI, aclFor),
-      },
+      { label: "denied path (folder ACL)", result: at(SECRET_NOTE) },
+      { label: "catalog URI (not subscribable)", result: at(CATALOG_RESOURCE_URI) },
       {
         label: "malformed URI (no vault/path separator)",
-        result: canReadResourceUri(v.vaultRegistry, ctx, `${RESOURCE_SCHEME}://nosep`, aclFor),
+        result: at(`${RESOURCE_SCHEME}://nosep`),
       },
-      {
-        label: "foreign scheme",
-        result: canReadResourceUri(v.vaultRegistry, ctx, "https://example.com/x.md", aclFor),
-      },
-      {
-        label: "unknown vault",
-        result: canReadResourceUri(
-          v.vaultRegistry,
-          ctx,
-          `${RESOURCE_SCHEME}://nope/pub/a.md`,
-          aclFor,
-        ),
-      },
-      {
-        label: "unauthenticated caller",
-        result: canReadResourceUri(v.vaultRegistry, v.ctx({ authenticated: false }), PUB, aclFor),
-      },
+      { label: "foreign scheme", result: at("https://example.com/x.md") },
+      { label: "unknown vault", result: at(`${RESOURCE_SCHEME}://nope/pub/a.md`) },
+      { label: "unauthenticated caller", result: at(PUB, v.ctx({ authenticated: false })) },
       {
         label: "caller without read:notes",
-        result: canReadResourceUri(
-          v.vaultRegistry,
-          v.ctx({ grantedScopes: new Set(["write:notes"]) }),
-          PUB,
-          aclFor,
-        ),
+        result: at(PUB, v.ctx({ grantedScopes: new Set(["write:notes"]) })),
       },
     ];
     let checked = 0;
@@ -364,6 +362,39 @@ describe("resources/updated over HTTP (modern era)", () => {
     expect(checked).toBe(refused.length);
     expect(checked).toBeGreaterThanOrEqual(7);
   });
+
+  it("(e) canReadResourceUri: a path that escapes the vault root is refused, however it is encoded", () => {
+    const v = vault();
+    const aclFor = (id: string) => v.registry.aclFor(id);
+    const escapes = [
+      `${RESOURCE_SCHEME}://test/pub/../secret/b.md`,
+      `${RESOURCE_SCHEME}://test/pub/%2e%2e/secret/b.md`,
+      `${RESOURCE_SCHEME}://test/%2e%2e/secret/b.md`,
+      `${RESOURCE_SCHEME}://test/%2Fetc%2Fpasswd`,
+    ];
+    for (const uri of escapes) {
+      expect(canReadResourceUri(v.vaultRegistry, v.ctx(), uri, aclFor), uri).toBeNull();
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "(e) canReadResourceUri: an in-vault symlink whose target lies outside the vault is refused",
+    () => {
+      const v = vault();
+      const aclFor = (id: string) => v.registry.aclFor(id);
+      const ctx = v.ctx();
+      const outside = mkdtempSync(join(tmpdir(), "rs-outside-"));
+      try {
+        symlinkSync(outside, join(v.root, "pub", "out"));
+        // Control: an ordinary file in the same readable folder still resolves.
+        expect(canReadResourceUri(v.vaultRegistry, ctx, PUB, aclFor)).not.toBeNull();
+        const through = buildResourceUri("test", "pub/out/x.md");
+        expect(canReadResourceUri(v.vaultRegistry, ctx, through, aclFor)).toBeNull();
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("each test vault has its own change bus", () => {
     expect(vault().vaultRegistry.changes).not.toBe(vault().vaultRegistry.changes);
