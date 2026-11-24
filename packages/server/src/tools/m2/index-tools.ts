@@ -178,8 +178,8 @@ export function buildIndexTools(deps: M2Deps): ToolDefinition[] {
               notes_epoch_stale_skipped: stats.notes_epoch_stale_skipped,
               ...failures,
             };
-          // read_failures names paths no caller check covers: the count goes out, the list stays
-          // in the server log.
+          // read_failures names paths no caller check covers, so only its count is returned; the
+          // server log gets a three-path sample per pass (pass-skip-log.ts).
           const { read_failures: _unlisted, ...counters } = stats;
           return { vault: v.id, ...counters, ...failures };
         } catch (e) {
