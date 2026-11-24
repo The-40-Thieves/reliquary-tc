@@ -11,7 +11,7 @@ import type { Database } from "../src/db/types";
 import { type CallerContext, ToolRegistry } from "../src/mcp/registry";
 import { createMcpServer } from "../src/mcp/server";
 import { closeStdioOpened, stdioContext } from "../src/runtime/stdio-context";
-import { connectStdio } from "../src/transports/stdio";
+import { serveStdioEras } from "../src/transports/stdio";
 import { VaultRegistry } from "../src/vault/registry";
 import { autoOpenSession } from "../src/workspace/auto-open";
 import {
@@ -40,7 +40,7 @@ interface Harness {
   close: () => Promise<void>;
 }
 
-/** The real stdio server over in-memory streams: `connectStdio` plus JSON-RPC lines, initialized. */
+/** The real stdio server over in-memory streams: `serveStdioEras` plus JSON-RPC lines, initialized. */
 async function harness(autoOpen: boolean): Promise<Harness> {
   const root = makeTempDir("obtc-stdio-autoopen-");
   tmpRoots.push(root);
@@ -62,19 +62,23 @@ async function harness(autoOpen: boolean): Promise<Harness> {
     config: { sessions: { autoOpen, windowSeconds: 1800 } },
     defaultVaultId: "main",
   });
-  const server = createMcpServer({
-    name: "reliquary-tc",
-    version: "0.0.0-test",
-    registry,
-    context,
-    visibility: { grantedScopes: new Set(["*"]) },
-    vaultRegistry: new VaultRegistry([{ id: "main", path: root }]),
-  });
-
+  const vaultRegistry = new VaultRegistry([{ id: "main", path: root }]);
   const stdin = new PassThrough();
   const stdout = new PassThrough();
   const replies = collectStdioReplies(stdout);
-  const transport = await connectStdio(server, { stdin, stdout });
+  const handle = serveStdioEras(
+    (era) =>
+      createMcpServer({
+        name: "reliquary-tc",
+        version: "0.0.0-test",
+        registry,
+        context,
+        visibility: { grantedScopes: new Set(["*"]) },
+        vaultRegistry,
+        era,
+      }),
+    { io: { stdin, stdout } },
+  );
   let nextId = 1;
   const request = async (method: string, params: object = {}) => {
     const id = nextId++;
@@ -92,7 +96,7 @@ async function harness(autoOpen: boolean): Promise<Harness> {
     tracker,
     closeOpened: (now) => closeStdioOpened(db, now),
     request,
-    close: () => transport.close(),
+    close: () => handle.close(),
   };
 }
 

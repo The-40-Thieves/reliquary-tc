@@ -10,7 +10,7 @@
 // This spawns the REAL built CLI (matching shutdown-boot-embed.test.ts's own GH #995 spawn
 // pattern) with BOTH transports enabled and stdin backed by `/dev/null` FROM PROCESS BIRTH
 // (`stdio: ["ignore", ...]`) — not a live pipe closed later — because the real bug's EOF races
-// `connectStdio()`/`server.onclose` assignment from the very first tick, which a pipe closed
+// the stdio attach (`serveStdioEras`) and its EOF wiring from the very first tick, which a pipe closed
 // after "ready on stdio" cannot exercise. Asserts the process stays alive and the HTTP transport
 // keeps serving through that EOF, then exits GRACEFULLY on SIGTERM (exit code 0, no terminating
 // signal — not just "the child eventually stopped") on POSIX; win32 has no real SIGTERM delivery
@@ -153,7 +153,7 @@ interface SpawnedServer {
 function spawnServer(configPath: string, runtime: "node" | "bun"): SpawnedServer {
   const child = spawn(runtime, [DIST_CLI, configPath], {
     // fd 0 = /dev/null from the moment the process starts — the actual docker/systemd shape,
-    // and the one that can race `connectStdio()`'s own `server.onclose` assignment. stdout/stderr
+    // and the one that can race the stdio attach's own EOF wiring (`serveStdioEras`). stdout/stderr
     // stay piped so "ready on stdio" and the HTTP transport are both still observable.
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env },
@@ -205,7 +205,7 @@ describe.each(["node", "bun"] as const)(
         const server = spawnServer(configPath, runtime);
         await server.ready;
         // fd 0 was already /dev/null before this process existed, so the stdio EOF this test
-        // cares about has already raced `connectStdio()` by the time "ready on stdio" printed —
+        // cares about has already raced the stdio attach by the time "ready on stdio" printed —
         // this wait just gives the (correctly non-fatal) EOF time to have been handled.
         await sleep(KEEPALIVE_WAIT_MS);
 
