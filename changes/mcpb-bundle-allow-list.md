@@ -1,0 +1,4 @@
+---
+type: Fixed
+---
+- **The MCPB bundle no longer carries repository tooling and deployment files.** `reliquary-tc.mcpb` used to pack every tracked file that `.mcpbignore` did not name, so it shipped about twenty root config files (`fly.toml`, `docker-compose.yml`, `justfile`, linter and scanner configs) and whole directories the server never reads (`deploy/`, `examples/`, `services/`, `rules/`, `packages/server/eval`, the other workspace packages). The pack step now stages an allow-list: `LICENSE`, `NOTICE`, `README.md`, `package.json`, the built server under `packages/server/`, and the bundle's own `node_modules`. A new file in the repository cannot reach the bundle unless it is added to that list, and the pack fails if anything else is found at the bundle root. Nothing the server loads at run time was removed.

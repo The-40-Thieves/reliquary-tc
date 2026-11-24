@@ -2,9 +2,11 @@
 //
 //   bun run bundle
 //
-// Ships the built server (packages/server/dist), the MCPB 0.3 manifest, and package
-// metadata; honors .mcpbignore. The manifest is validated before packing, and the MCPB
-// CLI version is pinned for reproducible output.
+// Ships the built server (packages/server/dist), the MCPB 0.3 manifest, the licence files and
+// package metadata, plus the node_modules assembled here. What is staged from the repo is an
+// allow-list (STAGED_REPO_PATHS in scripts/lib/mcpb-staging.mjs); .mcpbignore only prunes inside it.
+// The manifest is validated before packing, and the MCPB CLI version is pinned for reproducible
+// output.
 //
 // THE-950: the repo-root manifest.json is now the companion plugin's Obsidian manifest (Obsidian's
 // community-directory validator reads it from the repo's default branch, and it must live there —
@@ -20,7 +22,7 @@
 // the plugin's manifest.json permanently overwritten on disk (reproduced with `kill -9` by the
 // THE-950 review).
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { $ } from "bun";
@@ -30,6 +32,12 @@ import {
   ortNativeFiles,
   ortWasmFiles,
 } from "./lib/embedder-bundle.mjs";
+import {
+  assertLicenceFilesPacked,
+  buildMcpbLicenseText,
+  listZipEntries,
+  MCPB_LICENSE_FILE,
+} from "./lib/mcpb-license-file.mjs";
 import { packFromStaging, stageRuntimeModules } from "./lib/mcpb-staging.mjs";
 import { fetchVerifiedNpmPackage } from "./lib/npm-tarball.mjs";
 
@@ -85,12 +93,16 @@ try {
     target: "node",
     format: "esm",
     minify: true,
+    // The input list is what the bundle's licence file is collected from.
+    metafile: true,
     plugins: [embedderBundlePlugin()],
   });
   if (!bundled.success) {
     for (const log of bundled.logs) console.error(String(log));
     throw new Error("bundling the local embedder failed");
   }
+  if (!bundled.metafile) throw new Error("the embedder build returned no metafile");
+  const embedderInputs = Object.keys(bundled.metafile.inputs);
   // One sqlite-vec platform package per entry in its own optionalDependencies, fetched from the
   // registry (and integrity-checked) because the host install only has its own.
   const platformPackages = await Promise.all(
@@ -102,9 +114,20 @@ try {
     ),
   );
   try {
+    // Built before anything is staged, so a package with no licence text stops the pack here.
+    const licenceText = buildMcpbLicenseText({
+      repoRoot,
+      artifact: "reliquary-tc.mcpb",
+      serverDist: dirname(serverEntry),
+      embedderInputs,
+      embedderBaseDir: process.cwd(),
+      sqliteVec: { dir: vecDir, platformPackages },
+      ortDirs: [ortNodeDir, ortWebDir],
+    });
     await packFromStaging(repoRoot, outFile, {
-      populate: (stagingDir) =>
-        stageRuntimeModules(stagingDir, {
+      populate: async (stagingDir) => {
+        await writeFile(join(stagingDir, MCPB_LICENSE_FILE), licenceText);
+        await stageRuntimeModules(stagingDir, {
           sqliteVec: { dir: vecDir, platformPackages },
           embedder: {
             version: embedderVersion,
@@ -116,7 +139,8 @@ try {
                 .map(([key]) => [key, ortNativeFiles(ortNodeDir, key)]),
             ),
           },
-        }),
+        });
+      },
       pack: (stagingDir, out) => $`npx -y ${MCPB} pack ${stagingDir} ${out}`.cwd(repoRoot),
     });
   } finally {
@@ -128,7 +152,8 @@ try {
   await rm(scratch, { recursive: true, force: true });
 }
 
-// 4. Confirm the artifact exists and report its size.
+// 4. Confirm the artifact exists, carries its licence files, and report its size.
 if (!existsSync(outFile)) throw new Error(`bundle was not produced: ${outFile}`);
+assertLicenceFilesPacked(listZipEntries(outFile));
 const sizeMb = (statSync(outFile).size / 1_048_576).toFixed(2);
 console.log(`\n✓ packed ${outFile} (${sizeMb} MB)`);
