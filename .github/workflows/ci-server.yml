@@ -843,13 +843,8 @@ jobs:
     # actually resolves for filesystem ops -- but it is gated on RELIQUARY_TC_ACL_AUDIT, which
     # nothing set. This job is the first thing that ever sets it in strict mode.
     #
-    # Deliberately NOT folded into build-test: that matrix's module-harness tests
-    # (test/m{1..6}-helpers.ts) build their ToolRegistry with no `rootResolver`, so the central
-    # pathAcl stage in registry.ts (`const root = this.rootResolver?.(effVault); if (root) { ...
-    # def.pathAcl(...) }`) never runs and the extractors never execute there -- running strict
-    # mode over that suite would not test the extractors at all. The seven files below are the
-    # ones that DO wire a real rootResolver (grep for it if that set needs to grow), so this is
-    # the real dispatch path: central pathAcl stage + handler inside one runAudited frame.
+    # Module harnesses now wire a rootResolver and the central stage fails closed when it cannot
+    # resolve a root. This focused lane exercises the central stage and handler in strict mode.
     #
     # It found a real gap, and it's a documented carve-out, not a fix here. get_attachment
     # (include_references) / delete_attachment / list_attachments (include_reference_count) all

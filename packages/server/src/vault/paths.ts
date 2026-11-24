@@ -215,7 +215,7 @@ export function resolveVaultPath(vaultRoot: string, relPath: string): string {
   const resolved = resolveVaultPathChecked(vaultRoot, relPath);
   // THE-414 / #280: report the fs-op path to the (default-off) ACL audit so a dev/test run can
   // catch a pathAcl extractor that does not mirror the handler's real path usage.
-  recordPathUse(resolved.aclRel);
+  recordPathUse(resolved.aclRel, resolved.abs);
   return resolved.abs;
 }
 
@@ -248,7 +248,7 @@ function walkStart(absRoot: string, sub: string | undefined): { abs: string; acl
   assertRootNotPlantedSymlink(absRoot, sub ?? "");
   if (!sub) return { abs: absRoot, aclPrefix: "" };
   const resolved = resolveVaultPathChecked(absRoot, sub);
-  recordPathUse(resolved.aclRel);
+  recordPathUse(resolved.aclRel, resolved.abs);
   return { abs: resolved.abs, aclPrefix: resolved.aclRel };
 }
 
