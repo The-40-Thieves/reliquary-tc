@@ -28,7 +28,7 @@ import { noteExists, readNote, writeNoteAtomic } from "../../vault/notes-io";
 import { contentHash, normalizeVaultPath, resolveVaultPath, walkVault } from "../../vault/paths";
 import { captureSnapshot } from "../../vault/snapshots";
 import { readableStoredRow } from "../../vault/stored-acl-path";
-import { preflightNoteWrite } from "../../vault/write-gate";
+import { markBeforeNoteWrite, preflightNoteWrite } from "../../vault/write-gate";
 import { noteKeys, ToolHint, unknownPropertyHint } from "../hints";
 import { readRefusalShape } from "../read-refusals";
 import { ScanWarnings, scanWarningsShape } from "../scan-warnings";
@@ -176,6 +176,7 @@ const FindNotesByPropertyOutput = z.object({
 const UpdateInput = z
   .object({
     vault: VaultId,
+    idempotency_key: z.string().min(1).max(128).optional(),
     path: VaultPath,
     operation: z.enum(["set", "remove", "merge", "replace"]),
     key: z.string().min(1).optional(),
@@ -299,6 +300,7 @@ export function buildFrontmatterTools(deps: M1Deps): ToolDefinition[] {
 
     defineTool({
       name: "update_frontmatter",
+      acceptsIdempotencyKey: true,
       domain: "metadata",
       vaultArg: "vault",
       pathAcl: (input) => [{ op: "write", path: input.path }],
@@ -449,6 +451,7 @@ export function buildFrontmatterTools(deps: M1Deps): ToolDefinition[] {
             ctx.now,
           );
 
+        markBeforeNoteWrite(ctx.markEffectCommitted, abs, content);
         writeNoteAtomic(abs, content, true);
         deps.reindex?.(v.id, rel, content);
         // A match redacted the persisted bytes above — the RESPONSE's own `frontmatter` echo must

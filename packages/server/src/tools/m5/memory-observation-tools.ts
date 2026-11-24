@@ -71,6 +71,7 @@ export function buildMemoryObservationTools(deps: M5Deps): ToolDefinition[] {
             .regex(/^obs_[1-9][0-9]*$/, "observation_id looks like obs_42 (from get_entity)"),
           observation: NormalizedObservationText.optional(),
           retire: z.boolean().optional(),
+          idempotency_key: z.string().min(1).max(128).optional(),
         })
         .strict()
         .superRefine((data, ctx2) => {
@@ -84,6 +85,7 @@ export function buildMemoryObservationTools(deps: M5Deps): ToolDefinition[] {
             });
         }),
       outputSchema: UpdateObservationOutput,
+      acceptsIdempotencyKey: true,
       requiredScopes: ["write:memory"],
       handler: (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);

@@ -225,8 +225,15 @@ export function buildGitTools(deps: M4Deps): ToolDefinition[] {
       pathAcl: (input) => input.paths.map((p) => ({ op: "write" as const, path: p })),
       description:
         "Stage vault files for the next commit, via the Obsidian Git companion bridge. Write-family: the readOnly kill switch applies.",
-      inputSchema: z.object({ vault: VaultId, paths: z.array(VaultPath).min(1).max(200) }).strict(),
+      inputSchema: z
+        .object({
+          vault: VaultId,
+          paths: z.array(VaultPath).min(1).max(200),
+          idempotency_key: z.string().min(1).max(128).optional(),
+        })
+        .strict(),
       outputSchema: GitStageOutput,
+      acceptsIdempotencyKey: true,
       requiredScopes: ["write:git"],
       handler: async (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
@@ -257,8 +264,15 @@ export function buildGitTools(deps: M4Deps): ToolDefinition[] {
       vaultArg: "vault",
       description:
         "Commit the staged changes of the vault's git repo. Always requires human confirmation (execute:git is a HITL-floor family) — a commit is irreversible-in-effect from the agent's side.",
-      inputSchema: z.object({ vault: VaultId, message: z.string().min(3).max(2000) }).strict(),
+      inputSchema: z
+        .object({
+          vault: VaultId,
+          message: z.string().min(3).max(2000),
+          idempotency_key: z.string().min(1).max(128).optional(),
+        })
+        .strict(),
       outputSchema: GitCommitOutput,
+      acceptsIdempotencyKey: true,
       requiredScopes: ["execute:git"],
       // HEAD and the staged index of the vault's own repo (vault/git-state.ts).
       confirmationTargets: (_input, { root }) => (root ? gitCommitState(root) : null),

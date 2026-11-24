@@ -62,34 +62,76 @@ describe("THE-513 Part 2: idempotency declaration coverage", () => {
     ).toEqual([]);
   });
 
-  it("re-derives the known 19-tool idempotency surface (THE-513 Part 2)", () => {
-    // Named explicitly (not just counted) so a future addition/removal is visible in the diff
-    // rather than as a bare number change — the same reasoning as REGISTERED_TOOL_COUNT.
-    const expected = [
-      "add_observation",
-      "append_active_file",
-      "append_note",
-      "append_to_periodic_note",
-      "bulk_create_notes",
-      "bulk_move_notes",
-      "copy_note",
-      "create_base",
-      "create_canvas",
-      "create_periodic_note",
-      "delete_note",
-      "enqueue_capture",
-      "move_attachment",
-      "move_note",
-      "patch_note",
-      "start_session",
-      "update_active_file",
-      "write_attachment",
-      "write_note",
-    ];
+  it("re-derives the known 60-tool idempotency surface (THE-513 Part 2)", () => {
     const actual = registered
       .filter((t) => schemaExposesIdempotencyKey(t.inputSchema))
       .map((t) => t.name)
       .sort();
-    expect(actual).toEqual(expected);
+    expect(actual).toEqual(KEYED_TOOLS);
   });
 });
+
+// Named explicitly (not just counted) so a future addition/removal is visible in the diff
+// rather than as a bare number change — the same reasoning as REGISTERED_TOOL_COUNT.
+const KEYED_TOOLS = [
+  "add_bookmark",
+  "add_kanban_card",
+  "add_observation",
+  "add_tag",
+  "append_active_file",
+  "append_note",
+  "append_to_periodic_note",
+  "bulk_create_notes",
+  "bulk_move_notes",
+  "bulk_set_property",
+  "close_goal",
+  "commit_capture",
+  "commit_wiki_page",
+  "copy_note",
+  "create_base",
+  "create_canvas",
+  "create_entity",
+  "create_excalidraw",
+  "create_periodic_note",
+  "delete_active_file",
+  "delete_attachment",
+  "delete_entity",
+  "delete_note",
+  "end_session",
+  "enqueue_capture",
+  "find_or_create_periodic_note",
+  "format_table",
+  "git_commit",
+  "git_stage",
+  "insert_table_column",
+  "insert_table_row",
+  "link_entities",
+  "move_attachment",
+  "move_kanban_card",
+  "move_note",
+  "patch_active_file",
+  "patch_note",
+  "prune_hub_links",
+  "record_retrieval_feedback",
+  "remove_bookmark",
+  "remove_tag",
+  "rename_entity",
+  "restore_note",
+  "rewrite_link",
+  "save_workspace",
+  "set_goal",
+  "sort_table_by_column",
+  "start_session",
+  "unlink_entities",
+  "update_active_file",
+  "update_base",
+  "update_canvas",
+  "update_excalidraw",
+  "update_frontmatter",
+  "update_observation",
+  "update_task",
+  "work_forget",
+  "work_result",
+  "write_attachment",
+  "write_note",
+];

@@ -161,6 +161,7 @@ export function buildMemoryLifecycleTools(deps: M5Deps): ToolDefinition[] {
   return [
     defineTool({
       name: "rename_entity",
+      acceptsIdempotencyKey: true,
       domain: "knowledge",
       vaultArg: "vault",
       description:
@@ -171,6 +172,7 @@ export function buildMemoryLifecycleTools(deps: M5Deps): ToolDefinition[] {
           entity_id: z.string().min(1),
           new_name: z.string().min(1).optional(),
           status: EntityStatusSchema.optional(),
+          idempotency_key: z.string().min(1).max(128).optional(),
         })
         .strict(),
       outputSchema: RenameEntityOutput,
@@ -272,6 +274,7 @@ export function buildMemoryLifecycleTools(deps: M5Deps): ToolDefinition[] {
                 noteFile(v.root, newPath),
                 ...neighborFiles(v.root, neighborsToRematerialize),
               );
+            ctx.markEffectCommitted?.();
             const updated = updateEntity(
               ctx.db,
               e.id,
@@ -347,6 +350,7 @@ export function buildMemoryLifecycleTools(deps: M5Deps): ToolDefinition[] {
 
     defineTool({
       name: "unlink_entities",
+      acceptsIdempotencyKey: true,
       domain: "knowledge",
       vaultArg: "vault",
       description:
@@ -357,6 +361,7 @@ export function buildMemoryLifecycleTools(deps: M5Deps): ToolDefinition[] {
           source_id: z.string().min(1),
           target_id: z.string().min(1),
           relation_type: z.string().min(1),
+          idempotency_key: z.string().min(1).max(128).optional(),
         })
         .strict(),
       outputSchema: UnlinkEntitiesOutput,
@@ -379,7 +384,8 @@ export function buildMemoryLifecycleTools(deps: M5Deps): ToolDefinition[] {
           assertNoteOwnership(v.root, srcPath, src.id);
         }
         const now = (ctx.now ?? Date.now)();
-        return inWriteTransaction(ctx.db, "memory_unlink", () => {
+        const result = inWriteTransaction(ctx.db, "memory_unlink", () => {
+          ctx.markEffectCommitted?.();
           const { existed } = deleteRelation(ctx.db, src.id, tgt.id, input.relation_type);
           const sourceVaultPath = rematerialize(deps, ctx, v, src, now);
           return {
@@ -390,11 +396,13 @@ export function buildMemoryLifecycleTools(deps: M5Deps): ToolDefinition[] {
             source_vault_path: sourceVaultPath,
           };
         });
+        return result;
       },
     }),
 
     defineTool({
       name: "delete_entity",
+      acceptsIdempotencyKey: true,
       domain: "knowledge",
       vaultArg: "vault",
       description:
@@ -408,6 +416,7 @@ export function buildMemoryLifecycleTools(deps: M5Deps): ToolDefinition[] {
           // cascaded — a relation is another entity's data too, not solely this one's.
           cascade: z.boolean().default(false),
           permanent: z.boolean().default(false),
+          idempotency_key: z.string().min(1).max(128).optional(),
         })
         .strict(),
       outputSchema: DeleteEntityOutput,
@@ -471,6 +480,7 @@ export function buildMemoryLifecycleTools(deps: M5Deps): ToolDefinition[] {
         const files: NoteFile[] = [];
         const { relationsDeleted } = restoreFilesOnThrow(files, () =>
           inWriteTransaction(ctx.db, "memory_delete", () => {
+            ctx.markEffectCommitted?.();
             const { deleted, relationsDeleted: deletedCount } = deleteEntity(ctx.db, e.id);
             if (!deleted)
               throw err.invalidInput("entity not found", { entity_id: input.entity_id });

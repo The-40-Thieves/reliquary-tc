@@ -66,6 +66,7 @@ export function buildVerdictTools(deps: M8Deps): ToolDefinition[] {
   return [
     defineTool({
       name: "record_retrieval_feedback",
+      acceptsIdempotencyKey: true,
       principalOwned: true,
       domain: "knowledge",
       // THE-718: the description leads with WHEN to call this, because the emitter decision landed
@@ -86,6 +87,7 @@ export function buildVerdictTools(deps: M8Deps): ToolDefinition[] {
       // optional at the schema level and refineVerdictForm makes exactly one of them required.
       inputSchema: z
         .object({
+          idempotency_key: z.string().min(1).max(128).optional(),
           chunk_id: z
             .string()
             .min(1)
@@ -152,6 +154,8 @@ export function buildVerdictTools(deps: M8Deps): ToolDefinition[] {
           // #1229: every item runs through the single form's own stampRetrievalFeedback, so the
           // ownership and session checks are the same code, not a copy. One transaction makes the
           // batch all-or-nothing: a caller-level refusal thrown by any item rolls back the rest.
+          // No early idempotency mark: the write is one transaction in the experiential store with
+          // nothing after it, so a throw means nothing was stamped and the key stays usable.
           const results = inTransaction(edb, () =>
             verdicts.map((v) => {
               const r = stampRetrievalFeedback(
@@ -179,12 +183,14 @@ export function buildVerdictTools(deps: M8Deps): ToolDefinition[] {
 
     defineTool({
       name: "work_result",
+      acceptsIdempotencyKey: true,
       principalOwned: true,
       domain: "knowledge",
       description:
         "Record how the task you just finished went, as -1 (it failed or produced a bad result), 0 (neutral) or +1 (it worked). The verdict applies to every judgeable tool call in your current session that has no verdict yet, and then a fresh window opens — so calling this once at the end of a session covers the session, and calling it after each task partitions the session into those tasks. Protocol traffic and this verb itself are never judged. Nothing else writes agent_episodes.task_result, and two retrieval behaviours read it: a -1 holds those episodes out of promotion, and the preference extractor only ever learns from episodes carrying a verdict.",
       inputSchema: z
         .object({
+          idempotency_key: z.string().min(1).max(128).optional(),
           result: z
             .union([z.literal(-1), z.literal(0), z.literal(1)])
             .describe("-1 bad, 0 neutral, +1 good."),

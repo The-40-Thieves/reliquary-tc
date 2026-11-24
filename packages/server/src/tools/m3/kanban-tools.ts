@@ -13,6 +13,7 @@ import { checkCas, requireContentRead } from "../../vault/cas";
 import { parseNote, serializeNote } from "../../vault/frontmatter";
 import { noteExists, readNote, writeNoteAtomic } from "../../vault/notes-io";
 import { contentHash, normalizeVaultPath, resolveVaultPath, walkVault } from "../../vault/paths";
+import { markBeforeNoteWrite } from "../../vault/write-gate";
 import { defineTool } from "../m1/define";
 import { readRefusalShape } from "../read-refusals";
 import { ScanWarnings, scanWarningsShape } from "../scan-warnings";
@@ -202,6 +203,7 @@ export function buildKanbanTools(deps: M3Deps): ToolDefinition[] {
 
     defineTool({
       name: "add_kanban_card",
+      acceptsIdempotencyKey: true,
       domain: "structured",
       vaultArg: "vault",
       pathAcl: (input) => [{ op: "write", path: input.path }],
@@ -210,6 +212,7 @@ export function buildKanbanTools(deps: M3Deps): ToolDefinition[] {
       inputSchema: z
         .object({
           vault: VaultId,
+          idempotency_key: z.string().min(1).max(128).optional(),
           path: VaultPath,
           column: z.string().min(1),
           text: z.string().min(1),
@@ -255,6 +258,7 @@ export function buildKanbanTools(deps: M3Deps): ToolDefinition[] {
           path: rel,
           onFallback: frontmatterFallbackSink,
         });
+        markBeforeNoteWrite(ctx.markEffectCommitted, abs, next);
         writeNoteAtomic(abs, next, false);
         deps.reindex?.(v.id, rel, next);
         return {
@@ -270,6 +274,7 @@ export function buildKanbanTools(deps: M3Deps): ToolDefinition[] {
 
     defineTool({
       name: "move_kanban_card",
+      acceptsIdempotencyKey: true,
       domain: "structured",
       vaultArg: "vault",
       pathAcl: (input) => [{ op: "write", path: input.path }],
@@ -278,6 +283,7 @@ export function buildKanbanTools(deps: M3Deps): ToolDefinition[] {
       inputSchema: z
         .object({
           vault: VaultId,
+          idempotency_key: z.string().min(1).max(128).optional(),
           path: VaultPath,
           from_column: z.string().min(1),
           to_column: z.string().min(1),
@@ -332,6 +338,7 @@ export function buildKanbanTools(deps: M3Deps): ToolDefinition[] {
           path: rel,
           onFallback: frontmatterFallbackSink,
         });
+        markBeforeNoteWrite(ctx.markEffectCommitted, abs, next);
         writeNoteAtomic(abs, next, false);
         deps.reindex?.(v.id, rel, next);
         return {

@@ -30,6 +30,7 @@ import {
   noteTags,
   tagMatches,
 } from "../../vault/tags";
+import { markBeforeNoteWrite } from "../../vault/write-gate";
 import { ReadRefusals, readRefusalShape } from "../read-refusals";
 import { ScanWarnings, scanWarningsShape } from "../scan-warnings";
 import { defineTool } from "./define";
@@ -129,6 +130,7 @@ const FindNotesByTagOutput = z.object({
 const AddInput = z
   .object({
     vault: VaultId,
+    idempotency_key: z.string().min(1).max(128).optional(),
     path: VaultPath,
     tag: z.string().min(1),
     location: z.enum(["frontmatter", "inline"]).default("frontmatter"),
@@ -139,6 +141,7 @@ const AddInput = z
 const RemoveInput = z
   .object({
     vault: VaultId,
+    idempotency_key: z.string().min(1).max(128).optional(),
     path: VaultPath,
     tag: z.string().min(1),
     location: z.enum(["frontmatter", "inline", "all"]).default("all"),
@@ -232,6 +235,7 @@ export function buildTagsTools(deps: M1Deps): ToolDefinition[] {
 
     defineTool({
       name: "add_tag",
+      acceptsIdempotencyKey: true,
       domain: "metadata",
       vaultArg: "vault",
       pathAcl: (input) => [{ op: "write", path: input.path }],
@@ -296,6 +300,7 @@ export function buildTagsTools(deps: M1Deps): ToolDefinition[] {
         const content = enforceMemoryDefenseOnNoteWrite(mdConfig, rel, rawContent, {
           metrics: deps.metrics,
         }).content;
+        markBeforeNoteWrite(ctx.markEffectCommitted, abs, content);
         writeNoteAtomic(abs, content, false);
         deps.reindex?.(v.id, rel, content);
         // Security review round (MEDIUM #7): echo the SCANNED tag, not the raw caller-supplied
@@ -315,6 +320,7 @@ export function buildTagsTools(deps: M1Deps): ToolDefinition[] {
 
     defineTool({
       name: "remove_tag",
+      acceptsIdempotencyKey: true,
       domain: "metadata",
       vaultArg: "vault",
       pathAcl: (input) => [{ op: "write", path: input.path }],
@@ -390,6 +396,7 @@ export function buildTagsTools(deps: M1Deps): ToolDefinition[] {
             : rawContent;
         // Skip the rewrite (and content-hash churn) when nothing was removed (F1).
         if (removed > 0) {
+          markBeforeNoteWrite(ctx.markEffectCommitted, abs, content);
           writeNoteAtomic(abs, content, false);
           deps.reindex?.(v.id, rel, content);
         }

@@ -195,6 +195,7 @@ export function createCommitWikiPageTool(
 
   return defineTool({
     name: "commit_wiki_page",
+    acceptsIdempotencyKey: true,
     domain: "knowledge",
     vaultArg: "vault",
     // Every note that already exists is read (its hash is compared and returned, its text patched)
@@ -212,6 +213,7 @@ export function createCommitWikiPageTool(
     inputSchema: z
       .object({
         vault: VaultId,
+        idempotency_key: z.string().min(1).max(128).optional(),
         topic: z
           .string()
           .min(1)
@@ -600,13 +602,17 @@ export function createCommitWikiPageTool(
             "commit_wiki_page",
             ctx.now,
             false,
+            snapshotIds.length === 0 ? ctx.markEffectCommitted : undefined,
           );
           if (id !== null) snapshotIds.push(id);
         }
         applyWriteBatch(writes, {
           // The batch's durable intent, before the first note is replaced: a crash from here on
           // leaves a `pending` provenance record naming every path and the hash it was to hold.
-          beforeCommit: () => ctx.recordPendingWrite?.(settledDigests),
+          beforeCommit: () => {
+            ctx.recordPendingWrite?.(settledDigests);
+            if (snapshotIds.length === 0) ctx.markEffectCommitted?.();
+          },
         });
       } catch (e) {
         // A clean rollback leaves the vault as it was, so this call's snapshots are noise. An

@@ -454,6 +454,7 @@ export function buildPeriodicTools(deps: M3Deps): ToolDefinition[] {
 
     defineTool({
       name: "find_or_create_periodic_note",
+      acceptsIdempotencyKey: true,
       domain: "workspace",
       vaultArg: "vault",
       description:
@@ -465,6 +466,7 @@ export function buildPeriodicTools(deps: M3Deps): ToolDefinition[] {
           date: z.string().optional(),
           include_content: z.boolean().default(true),
           expand_template: z.boolean().default(false),
+          idempotency_key: z.string().min(1).max(128).optional(),
           ...ResponseFormatInput,
         })
         .strict(),
@@ -498,17 +500,15 @@ export function buildPeriodicTools(deps: M3Deps): ToolDefinition[] {
                 { required: ["write:templater"] },
               );
             expanded = await expandViaTemplater(deps, v.id, templateUsed, resolved.path);
+            if (expanded) ctx.markEffectCommitted?.();
           }
           // same template-can-carry-a-secret guard as create_periodic_note above.
           const mdConfig = deps.memoryDefense?.(v.id) ?? MEMORY_DEFENSE_OFF;
+          const opt = { metrics: deps.metrics, mark: ctx.markEffectCommitted, exclusive: true };
           if (!expanded) {
-            // Exclusive: a note another process created after the noteExists check above is FOUND,
-            // never replaced by the template (create_periodic_note commits the same way).
+            // Exclusive: a note created since the noteExists check above is found, not replaced.
             try {
-              const scan = writeNoteAtomicGuarded(abs, resolved.path, content, true, mdConfig, {
-                metrics: deps.metrics,
-                exclusive: true,
-              });
+              const scan = writeNoteAtomicGuarded(abs, resolved.path, content, true, mdConfig, opt);
               deps.reindex?.(v.id, resolved.path, scan.content);
               redactions = scan.redactions;
               created = true;
