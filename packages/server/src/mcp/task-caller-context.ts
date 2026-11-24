@@ -25,6 +25,7 @@ export interface CallerSnapshot {
   vaultId: string;
   vaultBound: boolean;
   transport?: "stdio" | "http";
+  idempotencyKeyHeader?: string;
   persona?: string;
   authVerified?: boolean;
   claimedProvenance?: ClaimedProvenance;
@@ -76,6 +77,7 @@ export const CALLER_CONTEXT_DISPOSITION: Record<keyof CallerContext, Disposition
   vaultId: carried,
   vaultBound: carried,
   transport: carried,
+  idempotencyKeyHeader: carried,
   persona: carried,
   authVerified: carried,
   claimedProvenance: carried,
@@ -129,6 +131,9 @@ export function snapshotCaller(ctx: CallerContext): CallerSnapshot {
     vaultId: ctx.vaultId,
     vaultBound: ctx.vaultBound === true,
     ...(ctx.transport !== undefined ? { transport: ctx.transport } : {}),
+    ...(ctx.idempotencyKeyHeader !== undefined
+      ? { idempotencyKeyHeader: ctx.idempotencyKeyHeader }
+      : {}),
     ...(ctx.persona !== undefined ? { persona: ctx.persona } : {}),
     ...(ctx.authVerified !== undefined ? { authVerified: ctx.authVerified } : {}),
     ...(ctx.claimedProvenance !== undefined ? { claimedProvenance: ctx.claimedProvenance } : {}),
@@ -152,6 +157,9 @@ export function restoreCaller(s: CallerSnapshot, runtime: WorkerRuntime): Caller
     vaultId: s.vaultId,
     vaultBound: s.vaultBound,
     ...(s.transport !== undefined ? { transport: s.transport } : {}),
+    ...(s.idempotencyKeyHeader !== undefined
+      ? { idempotencyKeyHeader: s.idempotencyKeyHeader }
+      : {}),
     ...(s.persona !== undefined ? { persona: s.persona } : {}),
     ...(s.authVerified !== undefined ? { authVerified: s.authVerified } : {}),
     ...(s.claimedProvenance !== undefined ? { claimedProvenance: s.claimedProvenance } : {}),

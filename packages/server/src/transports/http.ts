@@ -49,7 +49,7 @@ import type { VaultRegistry } from "../vault/registry";
 import { autoOpenSession } from "../workspace/auto-open";
 import { activeSessionFor, DEFAULT_TRACE_FOLDER } from "../workspace/sessions";
 import { anonymousGate, isAnonymousCandidate, mixedModeScopes } from "./anonymous-discovery";
-import { corsMiddleware, corsOriginSet } from "./cors";
+import { corsMiddleware, corsOriginSet, type HttpAuthExtra } from "./cors";
 import { mountHealthz } from "./healthz";
 import { isHostAllowed, isOriginAllowed } from "./host-guard";
 import { ANONYMOUS_BODY_BOUNDS, AUTHENTICATED_BODY_BOUNDS, readMcpBody } from "./mcp-body";
@@ -346,12 +346,11 @@ function contextFromAuthInfo(
       throw new Error("unauthenticated request reached the MCP handler");
     }
     const visibility = visibilityFromAuthInfo(opts, authInfo);
-    const extra = authInfo.extra as
-      | { caller?: string | null; vault?: string; persona?: string; verified?: boolean }
-      | undefined;
+    const extra = authInfo.extra as HttpAuthExtra | undefined;
     return {
       caller: extra?.caller ?? null,
       transport: "http",
+      idempotencyKeyHeader: extra?.idempotencyKeyHeader,
       // An anonymous (discovery-only) caller holds the default scopes for the tools/list filter but is
       // NOT authenticated: dispatch refuses any scope-gated tool, so even a call that slipped past
       // the edge's method list could not run one.
@@ -706,6 +705,7 @@ export function createHttpApp(opts: HttpAppOptions): HttpApp {
         clientId: authz.caller ?? "",
         scopes: [...authz.scopes],
         extra: {
+          idempotencyKeyHeader: Array.isArray(body) ? undefined : c.req.header("idempotency-key"),
           caller: authz.caller,
           vault: authz.vault,
           persona: authz.persona,

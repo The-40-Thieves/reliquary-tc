@@ -51,6 +51,7 @@ export interface CallerContext {
    *  operator's own local process (show_file_in_obsidian's OS launch) keys on `=== "stdio"`, so an
    *  absent value fails closed rather than being mistaken for the local operator. */
   transport?: "stdio" | "http";
+  idempotencyKeyHeader?: string;
   db: Database;
   elicitToken?: string | null;
   /** THE-583: a transport-VERIFIED 2026-era HITL confirmation (HMAC+TTL already checked); the
