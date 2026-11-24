@@ -14,7 +14,8 @@
     "fallback.js",
     "*.node",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "THIRD-PARTY-LICENSES.txt"
   ],
   "napi": {
     "binaryName": "reliquary-tc-native",

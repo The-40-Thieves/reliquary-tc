@@ -162,7 +162,8 @@
   "permissions": {
     "deny": [
       "Edit(/docs/reliquary-tc.config.schema.json)",
-      "Edit(/packages/server/src/db/migrations-embedded.ts)"
+      "Edit(/packages/server/src/db/migrations-embedded.ts)",
+      "Edit(/packages/native/THIRD-PARTY-LICENSES.txt)"
     ]
   }
 }

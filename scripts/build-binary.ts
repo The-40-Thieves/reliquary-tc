@@ -12,9 +12,14 @@
 // files, gzipped. packages/server/src/providers/local-embedder-registry.ts unpacks them on first use.
 // Prerequisites: packages/embedder-local installed and built (`bun install --frozen-lockfile && bun
 // run build` there); sqlite-vec / SQLite are embedded by their own earlier steps.
+//
+// It also writes `<outfile>-licenses.txt`: the project's licence and notice plus the licence text
+// of every package the bundler put into this executable (scripts/lib/third-party-licenses.mjs). A
+// package without a text, or with a licence nobody accepted, fails the build.
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { writeBinaryLicenseFile } from "./lib/binary-license-file.mjs";
 import {
   generateEmbeddedEmbedderModule,
   prepareEmbeddedRuntimeFiles,
@@ -101,6 +106,8 @@ try {
     format: "esm",
     minify: true,
     sourcemap: "inline",
+    // The input list is what the licence file is built from.
+    metafile: true,
     external,
     plugins,
   });
@@ -109,6 +116,15 @@ try {
     throw new Error("build-binary: bun build failed");
   }
   console.log(`build-binary: wrote ${outfile}`);
+  if (!result.metafile) throw new Error("build-binary: bun build returned no metafile");
+  const licenses = writeBinaryLicenseFile({
+    target,
+    outfile,
+    inputs: Object.keys(result.metafile.inputs),
+    cwd: process.cwd(),
+    repoRoot,
+  });
+  console.log(`build-binary: wrote ${licenses}`);
 } finally {
   rmSync(work, { recursive: true, force: true });
 }
