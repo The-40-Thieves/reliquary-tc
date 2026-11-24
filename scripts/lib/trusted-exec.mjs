@@ -113,5 +113,5 @@ export function trustedExecutable(name, options) {
  * running (no lookup at all); under bun, whose execPath is bun, it is node from PATH.
  */
 export function nodeExecutable() {
-  return process.versions.bun === undefined ? process.execPath : trustedExecutable("node");
+  return Object.hasOwn(process.versions, "bun") ? trustedExecutable("node") : process.execPath;
 }

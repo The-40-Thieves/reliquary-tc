@@ -39,6 +39,15 @@ export function overrideFileName(name) {
 const lf = (text) => text.replaceAll("\r\n", "\n");
 
 /**
+ * Sort order for names and paths: by code unit, which is what a bare `sort()` does. A locale
+ * order would list the same packages differently from one machine to the next.
+ */
+export function byCodeUnit(a, b) {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
+/**
  * The package directory of every input under a node_modules folder, absolute and sorted. An input
  * elsewhere is the project's own source (or a bundler-internal path) and is not a package.
  */
@@ -52,7 +61,7 @@ export function packageDirsFromInputs(inputs, baseDir) {
     const name = parts[0].startsWith("@") ? parts.slice(0, 2) : parts.slice(0, 1);
     dirs.add(resolve(abs.slice(0, at + MARKER.length), ...name));
   }
-  return [...dirs].sort();
+  return [...dirs].sort(byCodeUnit);
 }
 
 /** The licence and notice files in a package's root folder, as `{ file, text }`, sorted by name. */
@@ -60,7 +69,7 @@ export function licenseTextsIn(dir) {
   return readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isFile() && TEXT_FILE.test(e.name))
     .map((e) => e.name)
-    .sort()
+    .sort(byCodeUnit)
     .map((file) => ({ file, text: lf(readFileSync(join(dir, file), "utf8")) }));
 }
 
