@@ -9,6 +9,11 @@ on:
       # unverified. That is the same blind-spot class as the three publish-only targets.
       - '.github/workflows/publish.yml'
       - '.github/actions/setup-rust/**'
+      # What writes and checks the committed crate licence file.
+      - 'scripts/write-native-license-file.mjs'
+      - 'scripts/lib/crate-license-file.mjs'
+      - 'scripts/lib/third-party-licenses.mjs'
+      - 'scripts/third-party-license-texts/**'
   push:
     branches: [main]
   # Nightly run, so the Intel build legs (skipped on pull_request, see build) still run on a schedule.
@@ -105,6 +110,12 @@ jobs:
       - name: cargo clippy
         working-directory: packages/native
         run: cargo clippy --all-targets --all-features -- -D warnings
+        shell: bash
+      # packages/native/THIRD-PARTY-LICENSES.txt is committed: the npm packages and the Docker
+      # image ship it without a Rust toolchain to make it with. It lists the crates compiled into
+      # the module, so a dependency change that is not followed by a regeneration fails here.
+      - name: the committed crate licence file matches Cargo.lock
+        run: node scripts/write-native-license-file.mjs --check
         shell: bash
 
   # Build-only validation of the musl cross-compile path (THE-264 follow-up). The two linux-musl

@@ -54,6 +54,7 @@ const ALLOWED_FILES = new Map([
   ["packages/native/NOTICE", "copy of the root NOTICE"],
   ["packages/embedder-local/NOTICE", "copy of the root NOTICE"],
   ["packages/reranker-local/NOTICE", "copy of the root NOTICE"],
+  ["packages/native/THIRD-PARTY-LICENSES.txt", "generated; opens with the root NOTICE"],
   ["scripts/rename-mapping.test.mjs", "this gate"],
 ]);
 
