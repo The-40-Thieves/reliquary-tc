@@ -17,8 +17,6 @@ import type { ToolDefinition } from "../../mcp/registry";
 import {
   appendObservation,
   closeOpenInterval,
-  deleteEntity,
-  deleteRelation,
   type EntityRow,
   findEntity,
   getEntityById,
@@ -187,10 +185,14 @@ export function buildMemoryTools(deps: M5Deps): ToolDefinition[] {
         if (findEntity(ctx.db, v.id, type, name))
           throw err.invalidInput("entity already exists", { type, name });
         let e: EntityRow;
+        let vaultPath: string | null;
         try {
-          e = inSavepoint(ctx.db, () => {
+          // One rollback scope for the idempotency mark, the row and its note. A materialization
+          // refusal (a note already at this path that this new entity does not own) takes the row
+          // and the mark back together: no orphan row, and the same key can be sent again.
+          ({ e, vaultPath } = inSavepoint(ctx.db, () => {
             ctx.markEffectCommitted?.();
-            return insertEntity(ctx.db, {
+            const row = insertEntity(ctx.db, {
               vaultId: v.id,
               entityType: type,
               name,
@@ -198,22 +200,15 @@ export function buildMemoryTools(deps: M5Deps): ToolDefinition[] {
               materialize: input.materialize,
               now,
             });
-          });
+            return {
+              e: row,
+              vaultPath: input.materialize ? rematerialize(deps, ctx, v, row, now) : null,
+            };
+          }));
         } catch (caught) {
           // The UNIQUE natural-key index closes the findEntity read-then-insert race (F4).
           if (isUniqueViolation(caught))
             throw err.invalidInput("entity already exists", { type, name });
-          throw caught;
-        }
-        let vaultPath: string | null;
-        try {
-          vaultPath = input.materialize ? rematerialize(deps, ctx, v, e, now) : null;
-        } catch (caught) {
-          // Roll back the just-inserted row: a materialization refusal (a note already sitting at
-          // this path that this brand-new entity does not own — materialize.ts's ownership check)
-          // must never leave an orphan memory_entities row with no note, or worse a stranger's
-          // note silently claimed. Mirrors delete_entity's own row removal (memory-lifecycle-tools.ts).
-          deleteEntity(ctx.db, e.id);
           throw caught;
         }
         return {
@@ -506,20 +501,13 @@ export function buildMemoryTools(deps: M5Deps): ToolDefinition[] {
         );
         const relationType = scan.fields.relation_type as string;
         const now = (ctx.now ?? Date.now)();
-        const { existedAlready } = inSavepoint(ctx.db, () => {
+        // Same single rollback scope as create_entity above: a materialization refusal undoes the
+        // mark and whatever relation THIS call inserted, never an edge that existed before it.
+        const { existedAlready, sourceVaultPath } = inSavepoint(ctx.db, () => {
           ctx.markEffectCommitted?.();
-          return insertRelation(ctx.db, src.id, tgt.id, relationType, now);
+          const inserted = insertRelation(ctx.db, src.id, tgt.id, relationType, now);
+          return { ...inserted, sourceVaultPath: rematerialize(deps, ctx, v, src, now) };
         });
-        let sourceVaultPath: string | null;
-        try {
-          sourceVaultPath = rematerialize(deps, ctx, v, src, now);
-        } catch (caught) {
-          // Same orphan-avoidance as create_entity above: a materialization refusal must not
-          // leave a relation row this call did not exist to have. Only roll back a relation THIS
-          // call actually created — never delete an edge that already existed before it.
-          if (!existedAlready) deleteRelation(ctx.db, src.id, tgt.id, relationType);
-          throw caught;
-        }
         return {
           source_id: src.id,
           target_id: tgt.id,

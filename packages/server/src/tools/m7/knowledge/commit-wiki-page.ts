@@ -610,8 +610,8 @@ export function createCommitWikiPageTool(
           // The batch's durable intent, before the first note is replaced: a crash from here on
           // leaves a `pending` provenance record naming every path and the hash it was to hold.
           beforeCommit: () => {
-            if (snapshotIds.length === 0) ctx.markEffectCommitted?.();
             ctx.recordPendingWrite?.(settledDigests);
+            if (snapshotIds.length === 0) ctx.markEffectCommitted?.();
           },
         });
       } catch (e) {

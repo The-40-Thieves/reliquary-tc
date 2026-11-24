@@ -49,7 +49,7 @@ export function buildGoalTools(deps: M8Deps): ToolDefinition[] {
       }),
       requiredScopes: ["write:workspace"],
       tags: ["experiential"],
-      handler: (input, ctx) => {
+      handler: (input) => {
         if (!deps.edb) return UNAVAILABLE;
         const now = Date.now();
         // GH #994 review finding 7: every M5 writer resolves `input.vault` through
@@ -72,7 +72,6 @@ export function buildGoalTools(deps: M8Deps): ToolDefinition[] {
           { metrics: deps.metrics },
         );
         const text = scan.fields.text as string;
-        ctx.markEffectCommitted?.();
         const row = setGoal(deps.edb, {
           id: randomUUID(),
           vaultId,
@@ -183,9 +182,8 @@ export function buildGoalTools(deps: M8Deps): ToolDefinition[] {
       }),
       requiredScopes: ["write:workspace"],
       tags: ["experiential"],
-      handler: (input, ctx) => {
+      handler: (input) => {
         if (!deps.edb) return UNAVAILABLE;
-        ctx.markEffectCommitted?.();
         const row = closeGoal(deps.edb, {
           id: input.id,
           vaultId: input.vault,

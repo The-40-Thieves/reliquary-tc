@@ -197,6 +197,10 @@ describe("write idempotency keys", () => {
         first = await vault.call(tool, args, { elicitToken: token });
       }
       expect(first.ok, JSON.stringify(first)).toBe(true);
+      // The first call really wrote: a handler that recorded success without applying would pass
+      // every check below.
+      if (tool === "delete_attachment") expect(vault.exists(file)).toBe(false);
+      else expect(vault.read(file)).not.toBe(content);
       vault.write(file, content);
       const replay = await vault.call(tool, args);
       expect(replay.ok, JSON.stringify(replay)).toBe(true);

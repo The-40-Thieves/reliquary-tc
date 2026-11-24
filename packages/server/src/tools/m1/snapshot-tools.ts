@@ -6,7 +6,7 @@ import { ElicitToken, err, VaultId, VaultPath } from "@the-40-thieves/reliquary-
 import { z } from "zod";
 import { conventionsResultShape } from "../../conventions/schema";
 import type { ToolDefinition } from "../../mcp/registry";
-import { MEMORY_DEFENSE_OFF } from "../../util/memory-defense";
+import { enforceMemoryDefenseOnNoteWrite, MEMORY_DEFENSE_OFF } from "../../util/memory-defense";
 import { ResponseFormatInput, resolveResponseFormat } from "../../util/response-format";
 import { enforcePathAcl } from "../../vault/acl-path";
 import { checkCas, requireContentRead } from "../../vault/cas";
@@ -14,6 +14,7 @@ import { requireConfirmation } from "../../vault/hitl";
 import { noteExists, readNote, writeNoteAtomicGuarded } from "../../vault/notes-io";
 import { contentHash, normalizeVaultPath, resolveVaultPath } from "../../vault/paths";
 import { captureSnapshot, listSnapshots, readSnapshot } from "../../vault/snapshots";
+import { preflightNoteWrite } from "../../vault/write-gate";
 import { defineTool } from "./define";
 import type { M1Deps } from "./shared";
 
@@ -218,6 +219,16 @@ export function buildSnapshotTools(deps: M1Deps): ToolDefinition[] {
           path: rel,
           restored_from: input.snapshot_id,
         });
+        // a snapshot can predate the vault's memoryDefense config (or predate a secret
+        // being pasted into an earlier version of the note) — restoring it is itself a write of
+        // caller-influenced content and must be scanned the same way write_note's own body is.
+        // Scanned and judged by the write gate before the undo snapshot below can mark the call: a
+        // refused restore leaves the key and the confirmation usable.
+        const mdConfig = deps.memoryDefense?.(v.id) ?? MEMORY_DEFENSE_OFF;
+        const scan = enforceMemoryDefenseOnNoteWrite(mdConfig, rel, snap.content, {
+          metrics: deps.metrics,
+        });
+        preflightNoteWrite(abs, scan.content);
         let captured = false;
         if (prevRaw !== null) {
           // THE-603: unlike snapshot_note's hardcoded { enabled: true, ... } above, this call
@@ -238,12 +249,7 @@ export function buildSnapshotTools(deps: M1Deps): ToolDefinition[] {
               ctx.markEffectCommitted,
             ) !== null;
         }
-        // a snapshot can predate the vault's memoryDefense config (or predate a secret
-        // being pasted into an earlier version of the note) — restoring it is itself a write of
-        // caller-influenced content and must be scanned the same way write_note's own body is.
-        const mdConfig = deps.memoryDefense?.(v.id) ?? MEMORY_DEFENSE_OFF;
-        const scan = writeNoteAtomicGuarded(abs, rel, snap.content, true, mdConfig, {
-          metrics: deps.metrics,
+        writeNoteAtomicGuarded(abs, rel, scan.content, true, MEMORY_DEFENSE_OFF, {
           mark: captured ? undefined : ctx.markEffectCommitted,
         });
         deps.reindex?.(v.id, rel, scan.content);

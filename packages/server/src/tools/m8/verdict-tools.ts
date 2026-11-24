@@ -154,7 +154,8 @@ export function buildVerdictTools(deps: M8Deps): ToolDefinition[] {
           // #1229: every item runs through the single form's own stampRetrievalFeedback, so the
           // ownership and session checks are the same code, not a copy. One transaction makes the
           // batch all-or-nothing: a caller-level refusal thrown by any item rolls back the rest.
-          ctx.markEffectCommitted?.();
+          // No early idempotency mark: the write is one transaction in the experiential store with
+          // nothing after it, so a throw means nothing was stamped and the key stays usable.
           const results = inTransaction(edb, () =>
             verdicts.map((v) => {
               const r = stampRetrievalFeedback(
@@ -176,7 +177,6 @@ export function buildVerdictTools(deps: M8Deps): ToolDefinition[] {
         // caller that reaches the handler without going through schema validation.
         if (chunk_id === undefined || feedback === undefined)
           throw err.invalidInput("send chunk_id + feedback, or verdicts for a batch");
-        ctx.markEffectCommitted?.();
         return stampRetrievalFeedback(edb, { chunk_id, feedback, ...scope }, ctx);
       },
     }),
@@ -254,7 +254,6 @@ export function buildVerdictTools(deps: M8Deps): ToolDefinition[] {
         // response to a boundary below all the work is exactly that.
         const asOf = Math.min(input.as_of ?? now, now);
 
-        ctx.markEffectCommitted?.();
         const out = stampOpenWindow(deps.edb, {
           sessionId: active.sessionId,
           result: input.result,

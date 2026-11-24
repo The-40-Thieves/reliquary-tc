@@ -498,8 +498,8 @@ export function buildPeriodicTools(deps: M3Deps): ToolDefinition[] {
                 "expand_template requires the write:templater scope",
                 { required: ["write:templater"] },
               );
-            ctx.markEffectCommitted?.();
             expanded = await expandViaTemplater(deps, v.id, templateUsed, resolved.path);
+            if (expanded) ctx.markEffectCommitted?.();
           }
           // same template-can-carry-a-secret guard as create_periodic_note above.
           const mdConfig = deps.memoryDefense?.(v.id) ?? MEMORY_DEFENSE_OFF;
@@ -509,7 +509,7 @@ export function buildPeriodicTools(deps: M3Deps): ToolDefinition[] {
             try {
               const scan = writeNoteAtomicGuarded(abs, resolved.path, content, true, mdConfig, {
                 metrics: deps.metrics,
-                mark: input.expand_template && templateUsed ? undefined : ctx.markEffectCommitted,
+                mark: ctx.markEffectCommitted,
                 exclusive: true,
               });
               deps.reindex?.(v.id, resolved.path, scan.content);

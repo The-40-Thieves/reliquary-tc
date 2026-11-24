@@ -1,3 +1,5 @@
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeM5Vault } from "./m5-helpers";
 
@@ -47,6 +49,25 @@ describe("entity write idempotency", () => {
       expect(
         (v.db.prepare("SELECT COUNT(*) AS n FROM memory_entities").get() as { n: number }).n,
       ).toBe(0);
+    } finally {
+      v.cleanup();
+    }
+  });
+  it("leaves the key usable when the entity's note cannot be written", async () => {
+    const note = "memory/person/Example.md";
+    const v = makeM5Vault({ files: { [note]: "hand-written\n" } });
+    try {
+      const args = { vault: "test", type: "person", name: "Example", idempotency_key: "refused" };
+      const refused = await v.call("create_entity", args);
+      expect(refused.ok).toBe(false);
+      const rows = () =>
+        (v.db.prepare("SELECT COUNT(*) AS n FROM memory_entities").get() as { n: number }).n;
+      expect(rows()).toBe(0);
+      rmSync(join(v.root, note));
+      const retried = await v.call("create_entity", args);
+      expect(retried.ok, JSON.stringify(retried)).toBe(true);
+      expect(retried.meta?.idempotent_replay).toBeUndefined();
+      expect(rows()).toBe(1);
     } finally {
       v.cleanup();
     }

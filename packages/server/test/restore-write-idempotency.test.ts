@@ -30,6 +30,7 @@ describe("restore idempotency", () => {
       });
       const first = await v.call("restore_note", args, { elicitToken: token });
       expect(first.ok, JSON.stringify(first)).toBe(true);
+      expect(v.read("a.md")).toBe("original");
       v.write("a.md", "replacement");
       const replay = await v.call("restore_note", args);
       expect(replay.meta?.idempotent_replay).toBe(true);

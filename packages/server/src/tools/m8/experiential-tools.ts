@@ -314,7 +314,6 @@ export function buildExperientialTools(deps: M8Deps): ToolDefinition[] {
           // P1.7: forget only your OWN episodes unless you hold the elevated scope. The caller
           // predicate is added to the UPDATE (not a pre-check) so a foreign/absent id is a silent
           // no-op (forgotten:false) — no cross-principal existence oracle.
-          ctx.markEffectCommitted?.();
           const res = canCrossPrincipal(ctx)
             ? deps.edb
                 .prepare("UPDATE agent_episodes SET blocked = 1 WHERE id = ? AND blocked = 0")

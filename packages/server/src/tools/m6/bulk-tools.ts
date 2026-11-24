@@ -320,7 +320,6 @@ export function buildBulkTools(deps: M6Deps): ToolDefinition[] {
       handler: async (input, ctx) => {
         const v = deps.vaultRegistry.resolve(input.vault);
         const mdConfig = deps.memoryDefense?.(v.id) ?? MEMORY_DEFENSE_OFF;
-        ctx.markEffectCommitted?.();
         const report = await runBulk(
           input.paths,
           {
@@ -351,8 +350,11 @@ export function buildBulkTools(deps: M6Deps): ToolDefinition[] {
             });
             // a caller-supplied `value` can itself be secret-shaped; scan the final
             // serialized body (frontmatter + existing content) before it reaches disk.
+            // The first note to pass its gate marks the call; an item refused before that leaves
+            // nothing written and the key usable.
             const scan = writeNoteAtomicGuarded(abs, rel, body, false, mdConfig, {
               metrics: deps.metrics,
+              mark: ctx.markEffectCommitted,
             });
             deps.reindex?.(v.id, rel, scan.content);
             return {

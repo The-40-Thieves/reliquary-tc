@@ -12,6 +12,7 @@ describe("wiki commit idempotency", () => {
       };
       const first = await h.v.call("commit_wiki_page", args);
       expect(first.ok, JSON.stringify(first)).toBe(true);
+      expect(h.v.read("wiki/Topic.md")).toContain("# Topic");
       h.v.write("wiki/Topic.md", "replacement");
       const replay = await h.v.call("commit_wiki_page", args);
       expect(replay.meta?.idempotent_replay).toBe(true);

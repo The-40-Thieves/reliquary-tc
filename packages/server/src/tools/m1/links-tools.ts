@@ -29,7 +29,7 @@ import { noteExists, readNote, writeNoteAtomic } from "../../vault/notes-io";
 import { contentHash, normalizeVaultPath, resolveVaultPath } from "../../vault/paths";
 import { pruneHubLinks } from "../../vault/prune";
 import { rewriteLinks } from "../../vault/rewrite";
-import { markBeforeNoteWrite } from "../../vault/write-gate";
+import { markBeforeNoteWrite, preflightNoteWrite } from "../../vault/write-gate";
 import { readRefusalShape } from "../read-refusals";
 import {
   type RewriteWarning,
@@ -493,7 +493,13 @@ export function buildLinksTools(deps: M1Deps): ToolDefinition[] {
               metrics: deps.metrics,
             }).content,
           }));
-          ctx.markEffectCommitted?.();
+          // Every edit passes the write gate before the call is marked, and a rewrite that changes
+          // no note is never marked: a refusal or a no-op leaves the key usable.
+          if (ctx.markEffectCommitted && scannedEdits.length > 0) {
+            for (const e of scannedEdits)
+              preflightNoteWrite(resolveVaultPath(v.root, e.rel), e.text);
+            ctx.markEffectCommitted();
+          }
           for (const e of scannedEdits) {
             writeNoteAtomic(resolveVaultPath(v.root, e.rel), e.text, false);
             deps.reindex?.(v.id, e.rel, e.text);

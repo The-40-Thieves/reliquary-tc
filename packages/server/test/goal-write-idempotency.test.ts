@@ -119,6 +119,26 @@ const cases = [
     },
   ],
   [
+    "leaves the key usable when feedback is refused for want of a session",
+    async ({ edb, registry, ctx }: ReturnType<typeof fixture>) => {
+      edb
+        .prepare(
+          "INSERT INTO chunk_retrievals (id, chunk_id, retrieved_at, caller) VALUES ('r', 'chunk', 1, 'test')",
+        )
+        .run();
+      const args = { chunk_id: "chunk", feedback: 1, idempotency_key: "refused-feedback" };
+      const scoped = { ...ctx, grantedScopes: new Set(["write:workspace"]) };
+      const refused = await registry.dispatch("record_retrieval_feedback", args, scoped);
+      expect(refused.ok ? null : refused.error.code).toBe("forbidden");
+      const retried = await registry.dispatch("record_retrieval_feedback", args, {
+        ...scoped,
+        sessionId: "s",
+      });
+      expect(retried.ok, JSON.stringify(retried)).toBe(true);
+      expect(retried.meta?.idempotent_replay).toBeUndefined();
+    },
+  ],
+  [
     "replays a task verdict without stamping a later episode",
     async ({ edb, db, registry, ctx }: ReturnType<typeof fixture>) => {
       db.prepare(
@@ -131,6 +151,7 @@ const cases = [
       const args = { result: 1, idempotency_key: "verdict" };
       const first = await registry.dispatch("work_result", args, ctx);
       expect(first.ok, JSON.stringify(first)).toBe(true);
+      expect(first.ok && first.data).toMatchObject({ stamped: 1 });
       seed.run("second");
       const replay = await registry.dispatch("work_result", args, ctx);
       expect(replay.meta?.idempotent_replay).toBe(true);
