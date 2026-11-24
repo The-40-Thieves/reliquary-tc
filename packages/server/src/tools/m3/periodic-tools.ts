@@ -640,7 +640,8 @@ export function buildPeriodicTools(deps: M3Deps): ToolDefinition[] {
         deps.reindex?.(v.id, resolved.path, scan.content);
         ctx.noteWritten?.(resolved.path);
         const appended = Buffer.byteLength(scan.content, "utf8") - Buffer.byteLength(base, "utf8");
-        const mayCount = created || callerMayReadFile(ctx, v.root, resolved.path, "read:periodic");
+        const mayCount =
+          created || mayRead || callerMayReadFile(ctx, v.root, resolved.path, "read:periodic");
         return {
           period: input.period,
           date: toISODate(date),

@@ -23,6 +23,12 @@ const detailsOf = (r: ToolResult): Record<string, unknown> => {
   return r.error.details as Record<string, unknown>;
 };
 const scopes = (...s: string[]) => ({ grantedScopes: new Set(s) });
+// The two ways a caller may not read a file, kept apart so each half of the check is exercised: the
+// scope is missing while the path is open, or the scope is held while the path is denied.
+const nonReaders = (...readScopes: string[]) => [
+  { why: "lacks the read scope", acl: READER_ACL, held: [] as string[] },
+  { why: "holds the read scope but is denied the path", acl: WRITE_ONLY_ACL, held: readScopes },
+];
 
 let m3: M3Vault | undefined;
 let m5: M5Vault | undefined;
@@ -36,11 +42,10 @@ afterEach(() => {
 describe("write_attachment over an existing file", () => {
   const input = { vault: "test", path: "Private/a.png", content: PNG_B64, overwrite: true };
 
-  it.each(["OLD", "A LONGER OLD FILE"])(
-    "a caller that may not read it is not told its size (%s)",
-    async (old) => {
-      m3 = makeM3Vault({ files: { "Private/a.png": old }, acl: WRITE_ONLY_ACL });
-      const who = scopes("write:attachments");
+  describe.each(nonReaders("read:attachments"))("a caller that $why", ({ acl, held }) => {
+    it.each(["OLD", "A LONGER OLD FILE"])("is not told its size (%s)", async (old) => {
+      m3 = makeM3Vault({ files: { "Private/a.png": old }, acl });
+      const who = scopes("write:attachments", ...held);
       const asked = detailsOf(await m3.call("write_attachment", input, who));
       expect(asked.previous_size).toBeNull();
       const elicitToken = issueElicitToken(m3.db, {
@@ -52,8 +57,8 @@ describe("write_attachment over an existing file", () => {
       const done = dataOf(await m3.call("write_attachment", input, { ...who, elicitToken }));
       expect(done).toMatchObject({ overwritten: true });
       expect(m3.read("Private/a.png")).toBe("new bytes");
-    },
-  );
+    });
+  });
 
   it("a caller that may read it is told its size", async () => {
     m3 = makeM3Vault({ files: { "Private/a.png": "OLD" }, acl: READER_ACL });
@@ -65,14 +70,16 @@ describe("write_attachment over an existing file", () => {
 describe("delete_attachment", () => {
   const input = { vault: "test", path: "Private/a.png" };
 
-  it("a caller that may not read it deletes it and is not told its size", async () => {
-    m3 = makeM3Vault({ files: { "Private/a.png": "OLD" }, acl: WRITE_ONLY_ACL });
-    const done = dataOf(
-      await m3.callConfirmed("delete_attachment", input, scopes("delete:attachments")),
-    );
-    expect(done).toMatchObject({ deleted: true, size: null });
-    expect(m3.exists("Private/a.png")).toBe(false);
-  });
+  it.each(nonReaders("read:attachments"))(
+    "a caller that $why deletes it and is not told its size",
+    async ({ acl, held }) => {
+      m3 = makeM3Vault({ files: { "Private/a.png": "OLD" }, acl });
+      const who = scopes("delete:attachments", ...held);
+      const done = dataOf(await m3.callConfirmed("delete_attachment", input, who));
+      expect(done).toMatchObject({ deleted: true, size: null });
+      expect(m3.exists("Private/a.png")).toBe(false);
+    },
+  );
 
   it("a caller that may read it is told its size", async () => {
     m3 = makeM3Vault({ files: { "Private/a.png": "OLD" }, acl: READER_ACL });
@@ -91,20 +98,22 @@ describe("append_to_periodic_note onto an existing note", () => {
   const input = { vault: "test", period: "daily", date: "2026-06-18", content: "x" };
   const strip = (d: Record<string, unknown>) => ({ ...d, updated_at: null });
 
-  it("a caller that may not read it appends, and the reply does not depend on its bytes", async () => {
-    const replies: Record<string, unknown>[] = [];
-    for (const existing of ["PIN 4821", "PIN 4821\n"]) {
-      m3?.cleanup();
-      m3 = makeM3Vault({ files: { "2026-06-18.md": existing }, acl: WRITE_ONLY_ACL });
-      const done = dataOf(
-        await m3.call("append_to_periodic_note", input, scopes("write:periodic")),
-      );
-      expect(done).not.toHaveProperty("appended_bytes");
-      expect(m3.read("2026-06-18.md")).toContain("x");
-      replies.push(strip(done));
-    }
-    expect(replies[0]).toEqual(replies[1]);
-  });
+  it.each(nonReaders("read:periodic", "read:notes"))(
+    "a caller that $why appends, and the reply does not depend on its bytes",
+    async ({ acl, held }) => {
+      const who = scopes("write:periodic", ...held);
+      const replies: Record<string, unknown>[] = [];
+      for (const existing of ["PIN 4821", "PIN 4821\n"]) {
+        m3?.cleanup();
+        m3 = makeM3Vault({ files: { "2026-06-18.md": existing }, acl });
+        const done = dataOf(await m3.call("append_to_periodic_note", input, who));
+        expect(done).not.toHaveProperty("appended_bytes");
+        expect(m3.read("2026-06-18.md")).toContain("x");
+        replies.push(strip(done));
+      }
+      expect(replies[0]).toEqual(replies[1]);
+    },
+  );
 
   it("a caller that may not read still gets the count for a note the call creates", async () => {
     m3 = makeM3Vault({ acl: WRITE_ONLY_ACL });
@@ -113,13 +122,16 @@ describe("append_to_periodic_note onto an existing note", () => {
     expect(typeof done.appended_bytes).toBe("number");
   });
 
-  it("a caller that may read it gets the count", async () => {
-    m3 = makeM3Vault({ files: { "2026-06-18.md": "PIN 4821" }, acl: READER_ACL });
-    const done = dataOf(
-      await m3.call("append_to_periodic_note", input, scopes("write:periodic", "read:periodic")),
-    );
-    expect(typeof done.appended_bytes).toBe("number");
-  });
+  it.each(["read:periodic", "read:notes"])(
+    "a caller that may read it under %s gets the count",
+    async (readScope) => {
+      m3 = makeM3Vault({ files: { "2026-06-18.md": "PIN 4821" }, acl: READER_ACL });
+      const done = dataOf(
+        await m3.call("append_to_periodic_note", input, scopes("write:periodic", readScope)),
+      );
+      expect(typeof done.appended_bytes).toBe("number");
+    },
+  );
 });
 
 describe("end_session on a session whose trace is inside the vault", () => {
@@ -140,15 +152,15 @@ describe("end_session on a session whose trace is inside the vault", () => {
   };
   const input = { vault: "test", session_id: "legacy" };
 
-  it.each([1, 4])(
-    "a caller that may not read the trace ends it and is not told its event count (%i events)",
-    async (events) => {
-      m5 = seed(WRITE_ONLY_ACL, events);
-      const done = dataOf(await m5.call("end_session", input, scopes("write:workspace")));
+  describe.each(nonReaders("read:workspace"))("a caller that $why", ({ acl, held }) => {
+    it.each([1, 4])("ends it and is not told its event count (%i events)", async (events) => {
+      m5 = seed(acl, events);
+      const who = scopes("write:workspace", ...held);
+      const done = dataOf(await m5.call("end_session", input, who));
       expect(done).toMatchObject({ session_id: "legacy", trace_path: TRACE });
       expect(done).not.toHaveProperty("event_count");
-    },
-  );
+    });
+  });
 
   it("a caller that may read the trace is told its event count", async () => {
     m5 = seed(READER_ACL, 4);
