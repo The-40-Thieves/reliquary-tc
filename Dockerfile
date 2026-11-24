@@ -70,7 +70,8 @@ RUN set -eu; \
     node_file="packages/native/reliquary-tc-native.linux-${napi_arch}-gnu.node"; \
     dest=/out/node_modules/@the-40-thieves/reliquary-tc-native; \
     mkdir -p "$dest"; \
-    cp packages/native/package.json packages/native/index.js packages/native/fallback.js "$dest/"; \
+    cp packages/native/package.json packages/native/index.js packages/native/fallback.js \
+       packages/native/THIRD-PARTY-LICENSES.txt "$dest/"; \
     if [ -f "$node_file" ]; then \
       cp "$node_file" "$dest/"; \
     elif [ "$NATIVE_REQUIRED" = "1" ]; then \
@@ -79,6 +80,20 @@ RUN set -eu; \
     else \
       echo "WARNING: no $node_file; this image will run the pure-JS fallback" >&2; \
     fi
+
+# The embedder was built with every package installed. The image needs only what it runs on, so
+# reinstall it from the same lockfile without development packages (the test runner, the compiler
+# and what they depend on). The runtime stage then copies, and the licence file below lists, only
+# those.
+RUN (cd packages/embedder-local && rm -rf node_modules && bun install --frozen-lockfile --ignore-scripts --production) \
+ && test -f packages/embedder-local/node_modules/@huggingface/transformers/package.json \
+ && test ! -e packages/embedder-local/node_modules/vitest
+
+# THIRD-PARTY-LICENSES.txt for the image: the server build's packages plus every package in the two
+# node_modules folders the runtime stage copies. The build fails when one of them has no licence
+# text or a licence that is not accepted (scripts/lib/image-license-file.mjs).
+RUN bun scripts/write-image-license-file.mjs --out /out/THIRD-PARTY-LICENSES.txt \
+      --tree /out/node_modules --tree packages/embedder-local/node_modules
 
 # ---- runtime: bun + ca-certs + the server dist only ----
 FROM oven/bun:1.4.4-slim AS runtime
@@ -112,6 +127,8 @@ RUN apt-get update \
 COPY --from=build --chown=bun:bun /app/packages/server/dist /app/packages/server/dist
 COPY --from=build --chown=bun:bun /app/packages/embedder-local /app/packages/embedder-local
 COPY --from=build --chown=bun:bun /app/LICENSE /app/NOTICE /app/
+# The licence texts of every package copied into this stage, written by the build stage above.
+COPY --from=build --chown=bun:bun /out/THIRD-PARTY-LICENSES.txt /app/
 # Runtime-only node_modules (sqlite-vec, @the-40-thieves/reliquary-tc-native, @redis/client and its
 # dependencies), copied to packages/server/node_modules so the bare specifiers resolve from dist/ by
 # the ordinary walk up. A few tens of MB; the rest of the tree stays out.

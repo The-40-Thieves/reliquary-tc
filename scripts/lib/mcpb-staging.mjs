@@ -29,24 +29,48 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
-// Root-level entries never staged:
-//   .git          — repo metadata, irrelevant to the bundle and often large.
-//   dist          — the OLD build-output directory; the new .mcpb is written straight to
-//                   `<repoRoot>/dist/reliquary-tc.mcpb` (the one live-tree write this module still
-//                   makes), never read back through staging.
-//   node_modules  — .mcpbignore already excludes it unconditionally from the packed bundle, and
-//                   `os.tmpdir()` can be a different filesystem from the repo checkout (measured
-//                   on this box: ext2/ext3 device IDs differ between `/` and the `/data` mount),
-//                   which turns every hardlink here into a real byte copy — staging it would only
-//                   cost time for bytes the CLI would drop anyway. The THE-951 report's acceptance
-//                   evidence confirms omitting it does not change the packed bundle.
-//   manifest.json — replaced below with mcpb/manifest.json's content; skipped here so that write
-//                   is always a fresh file, never a write through a hardlink to the live tree's
-//                   own root manifest.json (which would corrupt the shared inode — exactly the
-//                   live-tree-write failure mode THE-951 removes).
-const SKIP_ROOT_ENTRIES = new Set([".git", "dist", "node_modules", "manifest.json"]);
+// The ONLY repo paths that are staged, relative to the repo root. This is an allow-list on purpose:
+// the step used to stage the whole checkout and leave it to .mcpbignore to deny what should not
+// ship, so every new tracked file (a deploy config, a linter config, a services/ tree) went into
+// the bundle until someone named it there. A path the bundle needs is added HERE.
+//
+//   .mcpbignore              applied by the CLI to what is staged (it drops itself, and prunes
+//                            inside packages/server/dist); never packed.
+//   packages/server          only dist/ (the built server and its assets) and the three files
+//                            beside it. package.json is load-bearing: its "type": "module" is what
+//                            makes Node load dist/cli.js as ESM.
+//
+// Not staged, and why it matters: the root manifest.json is the companion plugin's Obsidian manifest
+// (THE-950). The bundle's manifest.json is written fresh below from mcpb/manifest.json, so it is
+// never a write through a hardlink to the live tree's file (THE-951). node_modules is assembled by
+// stageRuntimeModules, not copied.
+export const STAGED_REPO_PATHS = [
+  ".mcpbignore",
+  "LICENSE",
+  "NOTICE",
+  "README.md",
+  "package.json",
+  "packages/server/LICENSE",
+  "packages/server/NOTICE",
+  "packages/server/package.json",
+  "packages/server/dist",
+];
+
+// Every name the packed bundle may hold at its root. The files come from the repo (manifest.json
+// from mcpb/manifest.json), `node_modules` is assembled by stageRuntimeModules, and the third-party
+// licence file is one the caller's `populate` may write.
+export const BUNDLE_ROOT_ENTRIES = [
+  "LICENSE",
+  "NOTICE",
+  "README.md",
+  "manifest.json",
+  "package.json",
+  "THIRD-PARTY-LICENSES.txt",
+  "node_modules",
+  "packages",
+];
 
 /**
  * Hardlinks `src` onto `dest`, falling back to a real copy when they are on different
@@ -86,26 +110,41 @@ async function stageTree(src, dest) {
 }
 
 /**
- * Populates `stagingDir` with the bundle's inputs: everything under `repoRoot` except
- * SKIP_ROOT_ENTRIES (hardlinked where possible — cheap, and the pack step only reads), plus
- * `mcpb/manifest.json`'s content written fresh as `manifest.json` at the staging root — honoring
- * `.mcpbignore` exactly as the in-place pack did, since `.mcpbignore` itself is staged like any
- * other file and the CLI applies it against the staging directory it packs.
+ * Populates `stagingDir` with the bundle's inputs: STAGED_REPO_PATHS and nothing else (hardlinked
+ * where possible, since the pack step only reads), plus `mcpb/manifest.json`'s content written
+ * fresh as `manifest.json` at the staging root. A listed path that is missing is an error, not a
+ * bundle silently packed without it.
  */
 export async function stageBundleInputs(repoRoot, stagingDir) {
-  for (const name of await readdir(repoRoot)) {
-    if (SKIP_ROOT_ENTRIES.has(name)) continue;
-    await stageTree(join(repoRoot, name), join(stagingDir, name));
+  for (const path of STAGED_REPO_PATHS) {
+    const parts = path.split("/");
+    const dest = join(stagingDir, ...parts);
+    await mkdir(dirname(dest), { recursive: true });
+    await stageTree(join(repoRoot, ...parts), dest);
   }
   const mcpbManifest = await readFile(join(repoRoot, "mcpb", "manifest.json"));
   await writeFile(join(stagingDir, "manifest.json"), mcpbManifest);
 }
 
+/**
+ * Throws when the staging root holds a name outside BUNDLE_ROOT_ENTRIES (`.mcpbignore` aside, which
+ * the CLI reads and drops). The CLI only removes entries, so a clean staging root is a clean bundle
+ * root; this is what stops a `populate` step from adding a root file nobody declared.
+ */
+export async function assertStagingRoot(stagingDir) {
+  const allowed = new Set([...BUNDLE_ROOT_ENTRIES, ".mcpbignore"]);
+  const stray = (await readdir(stagingDir)).filter((name) => !allowed.has(name));
+  if (stray.length > 0) {
+    throw new Error(
+      `mcpb-staging: ${stray.join(", ")} would be packed at the bundle root but is not in BUNDLE_ROOT_ENTRIES`,
+    );
+  }
+}
+
 const EMBEDDER_PACKAGE = "@the-40-thieves/reliquary-tc-embedder-local";
 
 /**
- * Assembles the bundle's own `node_modules` (the one thing stageBundleInputs deliberately does not
- * copy): the packages the server reaches by bare specifier at run time that a bundle would
+ * Assembles the bundle's own `node_modules` (no install tree is ever copied from the repo): the packages the server reaches by bare specifier at run time that a bundle would
  * otherwise lack.
  *
  *   sqlite-vec       the loader package plus ALL of its platform packages: one .mcpb runs on every
@@ -149,7 +188,8 @@ export async function stageRuntimeModules(stagingDir, sources) {
 
 /**
  * Builds a staging directory under the OS temp dir, populates it via stageBundleInputs (then
- * `populate(stagingDir)`, for the bundle's node_modules), calls `pack(stagingDir, outFile)` to
+ * `populate(stagingDir)`, for the bundle's node_modules), checks its root with assertStagingRoot,
+ * calls `pack(stagingDir, outFile)` to
  * produce the bundle, and always removes the staging directory (success or failure — the `finally`
  * is what makes a thrown pack leave nothing behind). The live tree at `repoRoot` is never written
  * to except `outFile` itself.
@@ -159,6 +199,7 @@ export async function packFromStaging(repoRoot, outFile, { pack, populate }) {
   try {
     await stageBundleInputs(repoRoot, stagingDir);
     await populate?.(stagingDir);
+    await assertStagingRoot(stagingDir);
     await pack(stagingDir, outFile);
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
