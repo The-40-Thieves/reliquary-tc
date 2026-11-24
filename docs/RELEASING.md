@@ -126,7 +126,7 @@ out-of-cadence alike, and still fails the same way on an undocumented user-visib
      from the earlier steps, now reading the shared classification instead of recomputing it).
 
 5. **Verify the assets** — the Release is already PUBLISHED, not a draft: `draft-release` creates it as
-   a draft, `check-release-assets.sh` confirms every artifact and all 19 cosign bundles are attached
+   a draft, `check-release-assets.sh` confirms every artifact and all 29 cosign bundles are attached
    (the native bundles are checked against the signature manifest `sign-artifacts` writes), and only
    then does its last step publish it. So there is no publish step for you to perform, and a RED
    `draft-release` job leaves an unpublished draft (re-run the job; it reuses the draft) rather than a
@@ -134,8 +134,9 @@ out-of-cadence alike, and still fails the same way on an undocumented user-visib
 
    ```sh
    npm view reliquary-tc version                 # 11 packages must all be at the new version
-   gh release view v<x.y.z> --json assets       # 31 assets: 5 binaries, plugin zip, legacy notice zip,
-                                                # .mcpb, SHASUMS256.txt, 3 loose BRAT files, and 19
+   gh release view v<x.y.z> --json assets       # 51 assets: 5 binaries, each with its sourcemap and
+                                                # its -licenses.txt, plugin zip, legacy notice zip,
+                                                # .mcpb, SHASUMS256.txt, 3 loose BRAT files, and 29
                                                 # .sigstore.json bundles (one per signed file)
    docker manifest inspect ghcr.io/the-40-thieves/reliquary-tc:<x.y.z>   # amd64 + arm64
    ```
@@ -240,8 +241,9 @@ out-of-cadence alike, and still fails the same way on an undocumented user-visib
   the `smoke-` tag behind.
 - **Cosign signatures** — the `sign-artifacts` job signs every binary artifact keylessly (GitHub OIDC,
   Sigstore Fulcio + Rekor; no key to manage) and re-verifies each bundle against the run's own workflow
-  identity. Covers the 8 native `.node` prebuilds, the 5 standalone binaries, both plugin zips, the 3
-  loose plugin files and the `.mcpb`: 19 `<file>.sigstore.json` bundles, plus a signature manifest
+  identity. Covers the 8 native `.node` prebuilds, the 5 standalone binaries with their sourcemaps
+  and licence files, both plugin zips, the 3 loose plugin files and the `.mcpb`: 29
+  `<file>.sigstore.json` bundles, plus a signature manifest
   (`signature-manifest.tsv`, one line per bundle) that only the completeness check reads. A family that
   matches no files fails the job. `build-docker` signs the pushed GHCR image by digest. **Signing is a
   barrier:** `publish-npm`, `publish-reranker-local`, `publish-embedder-local`, `build-docker` and
