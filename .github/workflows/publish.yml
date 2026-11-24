@@ -388,6 +388,12 @@ jobs:
             node -e 'const fs=require("fs");const f=process.argv[1];const p=JSON.parse(fs.readFileSync(f,"utf8"));p.publishConfig=Object.assign({},p.publishConfig,{access:"public",provenance:true});fs.writeFileSync(f,JSON.stringify(p,null,2)+"\n");' "$f"
             echo "publishConfig.access=public, provenance=true -> $f"
           done
+      # Each platform sub-package carries the compiled module, so it carries the licence texts of
+      # the Rust crates inside it: the committed packages/native/THIRD-PARTY-LICENSES.txt, copied
+      # into every npm/<triple> dir and added to its `files`.
+      - name: add the crate licence file to each platform sub-package
+        if: steps.preflight.outputs.already_published != 'true'
+        run: node scripts/add-native-license-to-platform-packages.mjs
       # Platform sub-packages (one per built triple, @the-40-thieves/reliquary-tc-native-<triple>)
       # + the umbrella optionalDependencies are generated and published by `napi pre-publish`.
       - name: publish platform sub-packages (napi)
@@ -1006,6 +1012,19 @@ jobs:
             [ -f "$tmp/cache/$db" ] || { echo "::error::$db was not provisioned"; exit 1; }
           done
           echo "ok: $bin reports $want, reaches stdio-ready, and provisions both chains"
+      # scripts/build-binary.ts writes the licence file beside the binary (the project's licence
+      # and notice plus the text for every package bundled into this target) and fails when it
+      # cannot complete it. Asserted as its own step so the two cross-compiled rows, which skip
+      # the smoke test, are covered too.
+      - name: assert the licence file was written
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          [ -s "packages/server/dist/reliquary-tc-$TARGET-licenses.txt" ] || {
+            echo "::error::no licence file beside the $TARGET binary"
+            exit 1
+          }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: binary-${{ matrix.target }}
@@ -1395,10 +1414,11 @@ jobs:
           }
 
           sign_family native artifacts/native-*/*.node
-          # A standalone binary ships with its sourcemap; each is signed, under its own family so the
-          # binary count stays the build matrix's row count.
-          sign_family binary artifacts/binary-*/reliquary-tc-!(*.map)
+          # A standalone binary ships with its sourcemap and its licence file; each is signed, under
+          # its own family so the binary count stays the build matrix's row count.
+          sign_family binary artifacts/binary-*/reliquary-tc-!(*.map|*-licenses.txt)
           sign_family binary-map artifacts/binary-*/reliquary-tc-*.map
+          sign_family binary-licenses artifacts/binary-*/reliquary-tc-*-licenses.txt
           sign_family plugin-zip artifacts/plugin/**/reliquary-tc-*.zip
           sign_family plugin-main artifacts/plugin/**/main.js
           sign_family plugin-manifest artifacts/plugin/**/manifest.json

@@ -79,7 +79,7 @@
   },
   "devDependencies": {
     "@codspeed/vitest-plugin": "^6.1.0",
-    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@types/better-sqlite3": "^9.6.0",
     "@types/bun": "^1.4.2",
     "@types/node": "^26.6.4",

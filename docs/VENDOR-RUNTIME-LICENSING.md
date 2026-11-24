@@ -55,9 +55,9 @@ only in design or candidate lists.
 | Artifact | Bundled (may ship in it) | Dynamically loaded or fetched | User-installed only | Ships today? |
 |---|---|---|---|---|
 | npm package (`reliquary-tc`; `@the-40-thieves/reliquary-tc-embedder-local` base plus six per-platform runtime packages, per `packages/embedder-local/README.md`) | Our Apache-2.0 code. Runtime packages carry ORT (MIT) and the WASM fallback (MIT). The base package bundles Transformers.js (Apache-2.0). | Models fetched from Hugging Face at first use (`model-fetch.ts`) | Foundry Local, NIM, TensorRT-RTX, CUDA: planned only | Yes (embedder pack per `scripts/pack-embedder-local.ts`) |
-| Compiled `bun --compile` binaries (`scripts/build-binary.ts`) | Anything the build plugin embeds: ORT native library and binding, `sqlite-vec`. The plugin in `scripts/lib/embedder-bundle.mjs` rewrites the ORT loader. | Models fetched at runtime | As for npm | Yes, the script exists. No licence text in the binary was found in `build-binary.ts` (grep for "licen"/"notice" returned nothing). |
+| Compiled `bun --compile` binaries (`scripts/build-binary.ts`) | Anything the build plugin embeds: ORT native library and binding, `sqlite-vec`. The plugin in `scripts/lib/embedder-bundle.mjs` rewrites the ORT loader. | Models fetched at runtime | As for npm | Yes. `build-binary.ts` writes `<binary>-licenses.txt` beside each executable: the project's LICENSE and NOTICE plus the licence text of every package the bundler put into that target (`scripts/lib/third-party-licenses.mjs`). The release attaches and signs it. |
 | MCPB bundle (`dist/reliquary-tc.mcpb`, `scripts/bundle-mcpb.ts`) | Server build, all `sqlite-vec` platform packages, ORT native libraries for each platform (`ORT_PLATFORMS`), `onnxruntime-web` WASM, `@huggingface/transformers` | Models fetched at runtime; not in the bundle | Nothing required | Yes |
-| Docker image (`Dockerfile`) | `sqlite-vec` (`cp -rL` of its platform packages), `packages/embedder-local` (including `licenses/`), runtime `node_modules` | Models fetched at runtime. No model download step found in the Dockerfile. | Foundry Local, NIM, CUDA: planned only | Yes |
+| Docker image (`Dockerfile`) | `sqlite-vec` (`cp -rL` of its platform packages), `packages/embedder-local` (including `licenses/`) with its production packages only, runtime `node_modules` | Models fetched at runtime. No model download step found in the Dockerfile. | Foundry Local, NIM, CUDA: planned only | Yes. The build stage writes `/app/THIRD-PARTY-LICENSES.txt` from the folders the image copies (`scripts/lib/image-license-file.mjs`); see G3 and G7. |
 | Remote worker container (`services/bge-m3-service`, `services/qwen-tei`, `services/docs-ingest`) | Service code (repo licence). Image contents for the Python services were NOT inspected in this pass. | `BAAI/bge-m3` and `BAAI/bge-reranker-v2-m3` fetched from the Hub (`hub.py`) | NVIDIA GPU stack and CUDA: UNVERIFIED for what the image installs | Yes, as a service in the repo. Image licence contents UNVERIFIED. |
 
 ## 3. Gaps today
@@ -73,14 +73,23 @@ Facts only. Each gap names its evidence path. None of these is fixed in this cha
   `scripts/lib/mcpb-staging.mjs` and `scripts/lib/embedder-bundle.mjs` for `LICENSE`, `licenses/`
   and `notice` returned no matches. The npm per-platform runtime packages do carry it:
   `scripts/pack-embedder-local.ts:57` packs `licenses/onnxruntime-LICENSE` into each one. MIT
-  requires the notice in copies or substantial portions. Whether
-  the binaries satisfy this is UNVERIFIED: ORT's notice may be carried by a file this grep did not
-  reach.
+  requires the notice in copies or substantial portions. The standalone binaries now ship it:
+  each release binary has a `-licenses.txt` beside it that carries the ORT licence (section 2).
+  The MCPB bundle ships it too: `THIRD-PARTY-LICENSES.txt` at the bundle root, written by
+  `scripts/bundle-mcpb.ts` from the server bundle's source maps and the embedder build's input
+  list, and the pack fails if that file, `LICENSE` or `NOTICE` is missing from the archive. ORT's
+  own third-party notices are linked from those files, not reproduced in them. The server build
+  itself writes `dist/THIRD-PARTY-LICENSES.txt` for the packages built into `dist/*.js`, so the npm
+  package and the Docker image carry those texts; that file does not cover ORT or `sqlite-vec`,
+  which neither of them has built in.
 - **G3. `sqlite-vec` licence text is not in its npm tarball.** `npm pack sqlite-vec@0.1.9` contains
   `README.md`, `index.cjs`, `index.d.ts`, `index.mjs`, `package.json` and no LICENSE. The MCPB and
   Docker artifacts copy the platform packages whole (`scripts/lib/mcpb-staging.mjs:125`), so the
   notice is absent unless a platform package carries it. Platform packages were NOT inspected
-  (UNVERIFIED).
+  (UNVERIFIED). The MCPB bundle no longer depends on that: its `THIRD-PARTY-LICENSES.txt` carries
+  both `sqlite-vec` licence texts for the loader and all five platform packages. The Docker image
+  no longer depends on it either: `/app/THIRD-PARTY-LICENSES.txt` carries both texts for the loader
+  and the platform package that image was built with.
 - **G4. `onnxruntime-node` 1.30.0 npm tarball has no LICENSE file.** Contents: `README.md`, `bin`,
   `dist`, `lib`, `package.json`, `script`. Same notice question as G2 (UNVERIFIED for the bundled copy).
 - **G5. Model licence flow-down is not disclosed to users in what we read.** Catalog licences are recorded
@@ -92,6 +101,29 @@ Facts only. Each gap names its evidence path. None of these is fixed in this cha
   builds the URL and `ALLOWED_DOWNLOAD_HOST_SUFFIXES` (line 426) limits redirects to `huggingface.co`
   and `hf.co`. A fetched model is covered by its own licence (all current catalog entries are Apache-2.0
   or MIT). This is a fact about the download path, not a licence problem.
+- **G7. The Docker image carries an LGPL library.** `@huggingface/transformers` depends on `sharp`
+  (Apache-2.0), which installs `@img/sharp-libvips-linux-<arch>` 1.3.4: a prebuilt libvips shared
+  library under LGPL-3.0-or-later with further libraries built into it (its README lists each one;
+  `cairo` is under MPL-1.1). The package has no licence file. The image keeps it as a separate
+  file under `packages/embedder-local/node_modules`, unmodified. `LGPL-3.0-or-later` is accepted
+  for the image alone (`IMAGE_ONLY_LICENSES` in `scripts/lib/image-license-file.mjs`), and the
+  image's licence file reproduces the upstream notice, the LGPL and the GPL it builds on, and
+  names the repository the library is built from (`scripts/third-party-license-texts/sharp-libvips.txt`).
+  The licence texts of the non-LGPL libraries inside it are linked, not reproduced. Not covered by
+  that file: the base image (Bun and Debian packages). The Rust crates in the native module have
+  their own file beside the module (G8).
+  `guid-typescript` 1.0.9 (a dependency of `onnxruntime-web`) declares ISC and publishes no
+  licence text in its package or its repository, so the file carries the standard ISC text for it.
+- **G8. The native module's Rust crates.** The compiled module
+  (`@the-40-thieves/reliquary-tc-native` and its per-platform packages) links 25 crates, all
+  offering MIT, Apache-2.0 or ISC (`rustix` and `linux-raw-sys` also offer Apache-2.0 WITH
+  LLVM-exception; `memchr` also offers the Unlicense). `packages/native/THIRD-PARTY-LICENSES.txt`
+  carries their texts. It is committed, written by `scripts/write-native-license-file.mjs` from
+  `cargo metadata`, and `ci-native` fails when it no longer matches `Cargo.lock`. It ships in the
+  umbrella npm package, in each per-platform package (`publish.yml` copies it in) and beside the
+  module in the Docker image. `napi` and `napi-sys` publish no licence file in their crates; the
+  text is napi-rs's repository `LICENSE`. Not reproduced: the Rust standard library's notices.
+  The MCPB bundle and the standalone binaries do not contain the native module.
 - **G7. EmbeddingGemma was dropped from the catalog for licence reasons.** `model-info.ts` header
   and `docs/EVALUATION.md:351` say the Gemma terms are not OSI-approved. There is no Gemma flow-down
   today. If it is reintroduced, the flow-down in section 1 applies.

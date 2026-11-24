@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeServerDistLicenseFile } from "../../../scripts/lib/server-dist-license-file.mjs";
 import { nodeExecutable } from "../../../scripts/lib/trusted-exec.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -60,6 +61,15 @@ if (!cli.startsWith("#!")) {
   }
   console.log("prepended node shebang -> dist/cli.js");
 }
+
+// The licence texts of every package built into dist/*.js, read from the source maps above.
+// Not best-effort: a bundled package with no licence text fails the build, because dist is
+// what npm and the Docker image ship.
+const licences = writeServerDistLicenseFile({
+  distDir: dist,
+  repoRoot: join(root, "..", ".."),
+});
+console.log(`wrote ${licences.packages} third-party licences -> dist/`);
 
 // Vendor the companion plugin (main.js + manifest.json). The monorepo's parallel
 // `build --filter='*'` gives no ordering guarantee, so build the plugin here if it is missing.
