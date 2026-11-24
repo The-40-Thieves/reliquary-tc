@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
+  BUNDLE_ROOT_ENTRIES,
   linkOrCopy,
   packFromStaging,
   stageBundleInputs,
@@ -57,7 +58,8 @@ test("linkOrCopy propagates a non-EXDEV error rather than silently copying", asy
 
 // Builds a small fixture tree shaped like the parts of the repo bundle-mcpb.ts cares about:
 // a live root manifest.json (the companion plugin's Obsidian manifest, THE-950), mcpb/manifest.json
-// (the MCPB bundle manifest), a .mcpbignore, and a build output file under packages/server/dist.
+// (the MCPB bundle manifest), a .mcpbignore, the licence and package files the bundle ships, and a
+// build output file under packages/server/dist.
 async function makeFixtureRepo() {
   const root = await mkdtemp(join(tmpdir(), "mcpb-staging-fixture-"));
   await writeFile(join(root, "manifest.json"), JSON.stringify({ which: "plugin-manifest" }));
@@ -66,6 +68,12 @@ async function makeFixtureRepo() {
   await writeFile(join(root, ".mcpbignore"), "scripts/\n**/*.ts\n");
   await mkdir(join(root, "packages", "server", "dist"), { recursive: true });
   await writeFile(join(root, "packages", "server", "dist", "cli.js"), "console.log('server');\n");
+  for (const dir of [root, join(root, "packages", "server")]) {
+    await writeFile(join(dir, "LICENSE"), "licence\n");
+    await writeFile(join(dir, "NOTICE"), "notice\n");
+    await writeFile(join(dir, "package.json"), JSON.stringify({ type: "module" }));
+  }
+  await writeFile(join(root, "README.md"), "# readme\n");
   await mkdir(join(root, ".git"), { recursive: true });
   await writeFile(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
   await mkdir(join(root, "dist"), { recursive: true });
@@ -259,4 +267,105 @@ test("packFromStaging runs populate() on the staging dir before pack()", async (
   });
   assert.deepEqual(order, ["populate", "pack"]);
   await rm(repoRoot, { recursive: true, force: true });
+});
+
+// The staging step is an allow-list: a file or directory nobody named does not reach the bundle,
+// whatever .mcpbignore says. Before it was one, every tracked root config file (and deploy/,
+// examples/, services/ and more below the root) was packed unless .mcpbignore denied it by name.
+const STAGED_ROOT = [
+  ".mcpbignore",
+  "LICENSE",
+  "NOTICE",
+  "README.md",
+  "manifest.json",
+  "package.json",
+  "packages",
+];
+
+test("stageBundleInputs stages only the paths the bundle needs, not whatever else the repo holds", async () => {
+  const repoRoot = await makeFixtureRepo();
+  const stagingDir = await mkdtemp(join(tmpdir(), "mcpb-staging-out-"));
+  try {
+    for (const stray of [".checkov.yml", "fly.toml", "justfile", "docker-compose.yml"]) {
+      await writeFile(join(repoRoot, stray), "stray\n");
+    }
+    for (const strayDir of [
+      "deploy",
+      "examples",
+      join("packages", "native"),
+      join("packages", "server", "eval"),
+    ]) {
+      await mkdir(join(repoRoot, strayDir), { recursive: true });
+      await writeFile(join(repoRoot, strayDir, "file.json"), "{}\n");
+    }
+    await stageBundleInputs(repoRoot, stagingDir);
+    assert.deepEqual((await readdir(stagingDir)).sort(), [...STAGED_ROOT].sort());
+    assert.deepEqual(await readdir(join(stagingDir, "packages")), ["server"]);
+    assert.deepEqual((await readdir(join(stagingDir, "packages", "server"))).sort(), [
+      "LICENSE",
+      "NOTICE",
+      "dist",
+      "package.json",
+    ]);
+  } finally {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(stagingDir, { recursive: true, force: true });
+  }
+});
+
+// The same property against the names at the REAL repo root, so a root file added tomorrow is
+// covered without anyone listing it here.
+test("no entry at the real repo root reaches the staging root unless the bundle ships it", async () => {
+  const repoRoot = await makeFixtureRepo();
+  const stagingDir = await mkdtemp(join(tmpdir(), "mcpb-staging-out-"));
+  try {
+    const realNames = await readdir(join(import.meta.dirname, ".."));
+    assert.ok(realNames.length > 20, `expected the repo root, got ${realNames.length} entries`);
+    for (const name of realNames) {
+      if (!existsSync(join(repoRoot, name))) await writeFile(join(repoRoot, name), "stray\n");
+    }
+    await stageBundleInputs(repoRoot, stagingDir);
+    const allowed = new Set([...BUNDLE_ROOT_ENTRIES, ".mcpbignore"]);
+    const leaked = (await readdir(stagingDir)).filter((name) => !allowed.has(name));
+    assert.deepEqual(leaked, []);
+  } finally {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(stagingDir, { recursive: true, force: true });
+  }
+});
+
+test("stageBundleInputs refuses a repo that lacks a path the bundle ships", async () => {
+  const repoRoot = await makeFixtureRepo();
+  const stagingDir = await mkdtemp(join(tmpdir(), "mcpb-staging-out-"));
+  try {
+    await rm(join(repoRoot, "NOTICE"));
+    await assert.rejects(stageBundleInputs(repoRoot, stagingDir), /NOTICE/);
+  } finally {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(stagingDir, { recursive: true, force: true });
+  }
+});
+
+test("packFromStaging refuses to pack when the staging root holds an entry the bundle does not ship", async () => {
+  const repoRoot = await makeFixtureRepo();
+  let packed = false;
+  let stagingDirSeen;
+  try {
+    await assert.rejects(
+      packFromStaging(repoRoot, join(repoRoot, "dist", "out.mcpb"), {
+        populate: async (stagingDir) => {
+          stagingDirSeen = stagingDir;
+          await writeFile(join(stagingDir, "sonar-project.properties"), "stray\n");
+        },
+        pack: async () => {
+          packed = true;
+        },
+      }),
+      /sonar-project\.properties/,
+    );
+    assert.equal(packed, false, "pack must not run on a staging root with a stray entry");
+    assert.equal(existsSync(stagingDirSeen), false, "the staging dir is still removed");
+  } finally {
+    await rm(repoRoot, { recursive: true, force: true });
+  }
 });

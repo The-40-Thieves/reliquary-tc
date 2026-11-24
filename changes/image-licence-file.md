@@ -1,0 +1,4 @@
+---
+type: Added
+---
+- **The Docker image now carries the licence texts of everything it copies in.** Beside the server build, the image holds the packages the server resolves at run time (`sqlite-vec`, `@redis/client`) and the local embedder with its own packages; only the server build's own packages had their texts in the image. The build stage now writes `/app/THIRD-PARTY-LICENSES.txt` from the folders the image copies, and the build stops if a package in them has no licence text or a licence that has not been accepted. The embedder is installed without its development packages (the test runner, the compiler and what they depend on), so the image is smaller and the file lists only what runs. Two licences are newly accepted: `(MIT OR CC0-1.0)` for every artifact, and `LGPL-3.0-or-later` for the image alone, for the prebuilt libvips library that `sharp` installs. The file does not cover the base image or the Rust crates in the native module, and says so.
