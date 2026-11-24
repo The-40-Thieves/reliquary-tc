@@ -192,6 +192,12 @@ export interface McpServerOptions {
    */
   era?: "legacy" | "modern";
   /**
+   * Whether this instance advertises `resources.subscribe`. Default true. Stdio passes false for
+   * the 2026-07-28 instance: nothing publishes resource updates there yet, so an acknowledged
+   * subscription would stay silent.
+   */
+  resourceSubscribe?: boolean;
+  /**
    * THE-583: codec for the `inputRequired({ requestState })` HITL round trip (SEP-2260/2322).
    * When supplied, an `elicit_required` outcome is answered with `inputRequired(...)` instead of a
    * bare error — natively on a modern connection, or (with `legacyElicitationShim` below) via the
@@ -302,7 +308,14 @@ export function createMcpServer(opts: McpServerOptions): Server {
         logging: {},
         // `subscribe` covers per-URI `notifications/resources/updated`; `listChanged` covers the
         // list itself. Both only when a vault registry makes resources available at all.
-        ...(opts.vaultRegistry ? { resources: { listChanged: true, subscribe: true } } : {}),
+        ...(opts.vaultRegistry
+          ? {
+              resources:
+                opts.resourceSubscribe === false
+                  ? { listChanged: true }
+                  : { listChanged: true, subscribe: true },
+            }
+          : {}),
         // THE-583: advertise the Tasks extension, but only when there is a queue to back it. The
         // client checks this before it is willing to receive a handle, so advertising it without a
         // substrate would invite a task we cannot create. `extensions` is the SEP-2575 field.

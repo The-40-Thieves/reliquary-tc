@@ -32,7 +32,6 @@ import { createRetrievalCaches } from "../search/query_cache";
 import { wireTelemetry } from "../telemetry/wiring";
 import { createTaskCancelTool } from "../tools/admin/task-cancel";
 import { createTaskStatusTool } from "../tools/admin/task-status";
-import { connectStdio } from "../transports/stdio";
 import {
   BOOT_WARMUP_MAX_WAIT_MS,
   deferBootWork,
@@ -58,8 +57,9 @@ import type { RuntimeCoreDeps } from "./runtime-core-types";
 import { wireRuntimeCore } from "./runtime-core-wiring";
 import { schedulerVaults, wireScheduler } from "./scheduler-wiring";
 import { makeSandboxRerun } from "./session-rerun-sandbox";
-import { joinReconcileOrExit, logShutdownError, raceShutdownPhaseOrExit } from "./shutdown-phase";
+import { joinReconcileOrExit, raceShutdownPhaseOrExit } from "./shutdown-phase";
 import { closeStdioOpened, stdioContext } from "./stdio-context";
+import { type StdioServing, startStdioServing } from "./stdio-wiring";
 import { wireStoresBehindBootstrapBarrier } from "./stores";
 import { wireDomainTools, wireGatewaySeams, wireHealthTools, wireM1Tools } from "./tool-wiring";
 import { wireTransports } from "./transport-wiring";
@@ -239,7 +239,7 @@ export async function buildServerRuntime(
     | {
         runReconcile: GatedReconcile;
         scheduler: Scheduler;
-        server: ReturnType<typeof createMcpServer>;
+        buildStdioServer: (era: "legacy" | "modern") => ReturnType<typeof createMcpServer>;
         transports: Awaited<ReturnType<typeof wireTransports>>;
         indexCoordinator: IndexCoordinator;
         stopVaultWatch: () => void;
@@ -453,26 +453,31 @@ export async function buildServerRuntime(
 
     const context = stdioContext({ activeSessions, db, acl, config, defaultVaultId });
 
-    const server = createMcpServer({
-      name: "reliquary-tc",
-      version: VERSION,
-      registry,
-      context,
-      // THE-937 round 3: stdio's own visibility, no `context()` call — see the field's doc
-      // comment. Stdio's is a fixed literal (never varies), so no readOnly/toolVisibility gap.
-      visibility: { grantedScopes: new Set(["*"]), readOnly: acl?.readOnly },
-      vaultRegistry,
-      ...mcpServerFacadeOptions(config.toolFacade),
-      // GH #1027: resources/read takes no parameters, so the config default is its only selector.
-      responseFormat: config.tools?.defaults?.responseFormat,
-      // THE-1098 (GH #964): suppresses buildInstructions' record_retrieval_feedback clause when
-      // there are no retrieval rows for feedback to update.
-      experientialLogRetrievals: config.experiential.logRetrievals,
-      elicitCodec: createStdioElicitCodec(), // THE-1106: see its doc comment (elicit.ts)
-      legacyElicitationShim: true, // legacy-era shim: see LEGACY_SHIMS.md
-      ...taskCalls,
-      servesTaskMethods: false, // stdio has no tasks/get route
-    });
+    // One server per protocol era, built on demand by the stdio entry (see stdio-wiring.ts).
+    const stdioElicitCodec = createStdioElicitCodec(); // THE-1106: see its doc comment (elicit.ts)
+    const buildStdioServer = (era: "legacy" | "modern") =>
+      createMcpServer({
+        name: "reliquary-tc",
+        version: VERSION,
+        registry,
+        context,
+        // THE-937 round 3: stdio's own visibility, no `context()` call — see the field's doc
+        // comment. Stdio's is a fixed literal (never varies), so no readOnly/toolVisibility gap.
+        visibility: { grantedScopes: new Set(["*"]), readOnly: acl?.readOnly },
+        vaultRegistry,
+        ...mcpServerFacadeOptions(config.toolFacade),
+        // GH #1027: resources/read takes no parameters, so the config default is its only selector.
+        responseFormat: config.tools?.defaults?.responseFormat,
+        // THE-1098 (GH #964): suppresses buildInstructions' record_retrieval_feedback clause when
+        // there are no retrieval rows for feedback to update.
+        experientialLogRetrievals: config.experiential.logRetrievals,
+        elicitCodec: stdioElicitCodec,
+        legacyElicitationShim: true, // legacy-era shim: see LEGACY_SHIMS.md
+        ...taskCalls,
+        servesTaskMethods: false, // stdio has no tasks/get route
+        era,
+        resourceSubscribe: era !== "modern", // no subscriptions on 2026-07-28 over stdio yet
+      });
 
     const transports = await wireTransports({
       config,
@@ -560,7 +565,7 @@ export async function buildServerRuntime(
     postCore = {
       runReconcile,
       scheduler,
-      server,
+      buildStdioServer,
       transports,
       indexCoordinator,
       stopVaultWatch,
@@ -574,7 +579,7 @@ export async function buildServerRuntime(
   const {
     runReconcile,
     scheduler,
-    server,
+    buildStdioServer,
     transports,
     indexCoordinator,
     stopVaultWatch,
@@ -583,14 +588,19 @@ export async function buildServerRuntime(
   } = requireBoot(postCore, "postCore");
 
   let closed = false;
+  let stdioServing: StdioServing | undefined;
   let cancelBootWarmup = (): void => {};
   const start = async (): Promise<void> => {
+    // Stdio is attached first: that starts no work, and the handshake it reports gates the boot
+    // pass below. Without stdio nothing reports one, so the cap applies.
+    const stdio = config.transports.stdio
+      ? startStdioServing({ config, buildStdioServer, close })
+      : undefined;
+    stdioServing = stdio;
     // Boot pass, backgrounded; leader-gated (GH #995). Its synchronous first segment (the vault
     // walk) must not run ahead of the first request, so it starts once the stdio client has
     // finished `initialize`, or after the cap when no handshake reaches this server.
-    const initialized = new Promise<void>((resolve) => {
-      server.oninitialized = resolve;
-    });
+    const initialized = stdio?.initialized ?? new Promise<void>(() => {});
     indexResources.embedderWarmup.schedule({ initialized, maxWaitMs: BOOT_WARMUP_MAX_WAIT_MS });
     cancelBootWarmup = deferBootWork(() => void runReconcile(bootReconcileAbort.signal), {
       initialized,
@@ -611,35 +621,8 @@ export async function buildServerRuntime(
     // THE-288: honor transports.stdio. Default (true) connects the stdio MCP transport; when
     // false the server serves HTTP-only (the listening socket keeps the process alive), and if
     // neither transport is enabled there is nothing to serve, so exit with a clear message.
-    if (config.transports.stdio) {
+    if (stdio) {
       if (config.transports.http.enabled) emitHeadlessStdioNotice(); // see boot-notices.ts
-      await connectStdio(server);
-      // GH #995: a stdio client disconnecting closes stdin — the MCP SDK already forwards that
-      // to `server.onclose`, but nothing here was listening. Route it through the SAME bounded
-      // close() every signal uses; idempotent via close()'s own `closed` flag.
-      //
-      // Fix (headless HTTP deploy crash-loop): that same EOF fires just as reliably when stdin is
-      // simply absent (`docker run -d`, a compose service without `stdin_open: true`, a systemd
-      // unit) — nobody disconnected a stdio CLIENT, the process just never had one. When HTTP is
-      // also enabled, closing the WHOLE process on that signal takes its listener down too, so
-      // this only tears down the stdio transport (which has already closed itself) and process.exit
-      // is reserved for stdio being the SOLE transport, matching GH #995's original behavior
-      // exactly for that case. stdio and HTTP each get their own McpServer instance (see
-      // wireTransports/createMcpServer in transport-wiring.ts) — `server` here is the stdio one
-      // alone, so this cannot tear down an HTTP session.
-      server.onclose = () => {
-        if (config.transports.http.enabled) {
-          process.stderr.write(
-            "reliquary-tc: stdin closed (stdio transport EOF) — HTTP transport still serving; " +
-              "continuing HTTP-only (set transports.stdio: false to silence this for headless " +
-              "deploys)\n",
-          );
-          return;
-        }
-        void close("transport:stdio-eof") // F3: close() can REJECT — mirrors shutdown.ts's guard
-          .catch(logShutdownError)
-          .finally(() => process.exit(0));
-      };
       process.stderr.write(
         `reliquary-tc ${VERSION} ready on stdio (vault ${defaultVaultId}; native=${nativeReadyToken(nativeBindingActive)} vec=${hasVec ? "on" : "off"})\n`,
       );
@@ -665,6 +648,7 @@ export async function buildServerRuntime(
     fts.cancel();
     process.stderr.write(`reliquary-tc: shutting down (${reason})\n`);
     await transports.close().catch(() => {}); // F3: no more requests FIRST (was LAST, after release)
+    await stdioServing?.close().catch(() => {}); // stdio ends with the runtime; a no-op after EOF
     // GH #995: abort the boot reconcile — left running it embeds with no deadline; both
     // flush() and embed-batches.ts's worker loop check this signal between sub-batches.
     bootReconcileAbort.abort();

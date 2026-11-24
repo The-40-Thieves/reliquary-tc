@@ -64,7 +64,7 @@ The experiential tier is a **membrane**: a physically separate `experiential.db`
 
 ## Protocol
 
-MCP spec **2025-11-25**. STDIO for local; Streamable HTTP for HTTP modes. The server advertises **tools, resources, and prompts** — notes are readable as MCP Resources over `reliquary-tc://<vault>/<path>` URIs (read-scope + folder-ACL enforced). HITL uses a custom single-use `elicit_token` pattern that works with any MCP client.
+MCP specs **2025-11-25** and **2026-07-28**, both served. STDIO for local, where the client's opening message picks the era for that connection; Streamable HTTP for HTTP modes. The server advertises **tools, resources, and prompts** — notes are readable as MCP Resources over `reliquary-tc://<vault>/<path>` URIs (read-scope + folder-ACL enforced). HITL uses a custom single-use `elicit_token` pattern that works with any MCP client.
 
 ## V2 (parked, with a trigger)
 
