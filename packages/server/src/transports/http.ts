@@ -437,6 +437,7 @@ export interface HttpApp {
  */
 export function createHttpApp(opts: HttpAppOptions): HttpApp {
   const app = new Hono();
+  const closing = new AbortController(); // aborted by close(): ends the listen-extension streams
   // The client address is read from the TCP peer before any middleware below can replace the request
   // (hono's bodyLimit does, on /oauth/*): see auth/client-ip.ts. Keep this the first middleware.
   app.use("*", captureClientPeer);
@@ -693,7 +694,7 @@ export function createHttpApp(opts: HttpAppOptions): HttpApp {
     const extension = serveListenExtension({
       body,
       modern: c.req.header("mcp-protocol-version") === MODERN_PROTOCOL_VERSION,
-      signal: c.req.raw.signal,
+      signal: AbortSignal.any([c.req.raw.signal, closing.signal]),
       owner: { vaultId: authz.vault ?? opts.vaultId, caller: authz.caller },
       advisoryBus: opts.advisoryBus,
       vaultRegistry: opts.vaultRegistry,
@@ -737,7 +738,11 @@ export function createHttpApp(opts: HttpAppOptions): HttpApp {
 
   // The handler is the APP's now; closing it is a shutdown concern. Resource updates travel on the
   // vault registry's `changes` bus, not `notify`, which nothing in production calls.
-  return { app, notify: handler.notify, close: () => handler.close() };
+  const close = async (): Promise<void> => {
+    closing.abort();
+    await handler.close();
+  };
+  return { app, notify: handler.notify, close };
 }
 
 export type HttpHandle = ServerHandle & {

@@ -396,6 +396,22 @@ describe("resources/updated over HTTP (modern era)", () => {
     },
   );
 
+  it(
+    "closing the app ends an open resource stream, so shutdown does not wait on a connected subscriber",
+    async () => {
+      const { app } = startVault();
+      const s = await openListen(app, await tokenFor(["*"]), [PUB]);
+      try {
+        expect(await s.waitFor((fs) => fs.some(isAck))).toBe(true);
+        await app.close();
+        expect(await waitForFrames([], () => s.ended(), 2000)).toBe(true);
+      } finally {
+        await s.stop();
+      }
+    },
+    stallTimeout(30_000),
+  );
+
   it("each test vault has its own change bus", () => {
     expect(vault().vaultRegistry.changes).not.toBe(vault().vaultRegistry.changes);
   });
