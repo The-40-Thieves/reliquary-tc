@@ -126,6 +126,29 @@ test("a copied package with no licence text stops the build and leaves no file",
   });
 });
 
+test("the output is only ever the licence file, never another path", () => {
+  const files = { ...SERVER, ...pkg("out/node_modules/copied", "copied", "MIT") };
+  withScratch(files, (root) => {
+    const other = join(root, "out", "keep.txt");
+    writeFileSync(other, "KEEP\n");
+    const to = (outFile) =>
+      writeImageLicenseFile({
+        outFile,
+        trees: [join(root, "out", "node_modules")],
+        serverDist: join(root, "packages", "server", "dist"),
+        repoRoot: root,
+        overridesDir: join(root, "overrides"),
+      });
+    assert.throws(() => to(other), /must be named THIRD-PARTY-LICENSES\.txt/);
+    assert.equal(readFileSync(other, "utf8"), "KEEP\n");
+    // A folder of that name is not removed in place of a file.
+    const folder = join(root, "dir", "THIRD-PARTY-LICENSES.txt");
+    mkdirSync(folder, { recursive: true });
+    assert.throws(() => to(folder), /is not a regular file/);
+    assert.equal(existsSync(folder), true);
+  });
+});
+
 test("a copied package under a licence nobody accepted stops the build", () => {
   const files = { ...SERVER, ...pkg("out/node_modules/copyleft", "copyleft", "MPL-2.0") };
   withScratch(files, (root) => {
