@@ -53,11 +53,37 @@ export function idempotencyKeyOf(
   const argument = extractIdempotencyKey(input);
   const header = def.acceptsIdempotencyKey ? ctx.idempotencyKeyHeader : undefined;
   if (header === undefined) return argument;
-  if (header.length < 1 || header.length > 128)
+  // Repeated header lines reach here joined with a comma, so a comma means the request may have
+  // carried two different keys. Refused, since a retry sending one of them would not match.
+  if (header.length < 1 || header.length > 128 || header.includes(","))
     throw new ReliquaryTcError("validation_error", "invalid idempotency header");
   if (argument !== undefined && argument !== header)
     throw new ReliquaryTcError("validation_error", "idempotency header and argument disagree");
   return header;
+}
+
+/**
+ * The context an offloaded call takes into its job row. The header crosses only for a tool that
+ * takes a key and only when dispatch would accept it; a tool that ignores it does not carry it.
+ * `undefined` means the header would be refused, so the call must run synchronously, where
+ * dispatch gives that refusal itself instead of a task that fails later.
+ */
+export function offloadContext<C extends { idempotencyKeyHeader?: string }>(
+  input: unknown,
+  def: { acceptsIdempotencyKey?: boolean },
+  ctx: C,
+): C | undefined {
+  if (ctx.idempotencyKeyHeader === undefined) return ctx;
+  if (!def.acceptsIdempotencyKey) {
+    const { idempotencyKeyHeader: _header, ...rest } = ctx;
+    return rest as C;
+  }
+  try {
+    idempotencyKeyOf(input, def, ctx);
+    return ctx;
+  } catch {
+    return undefined;
+  }
 }
 
 export function idempotencyArgs(data: unknown): unknown {

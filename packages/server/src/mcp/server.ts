@@ -58,6 +58,7 @@ import { instructionsSurfaceOf } from "./instructions-routing";
 import { progressReporter } from "./progress-notify";
 import { getPrompt, listPrompts } from "./prompts";
 import type { CallerContext, ToolRegistry } from "./registry";
+import { offloadContext } from "./registry/idempotency";
 import { requestCallerMeta } from "./request-meta";
 import { asResourceProtocolError } from "./resource-errors";
 import {
@@ -486,7 +487,8 @@ export function createMcpServer(opts: McpServerOptions): Server {
       const taskArgs = def?.taskAugmentable
         ? opts.registry.withDefaultVaultArgs(name, args, ctx)
         : undefined;
-      if (taskArgs && opts.registry.passesPolicyGates(name, taskArgs, ctx)) {
+      const taskCtx = taskArgs && def ? offloadContext(taskArgs, def, ctx) : undefined;
+      if (taskArgs && taskCtx && opts.registry.passesPolicyGates(name, taskArgs, ctx)) {
         const offloaded = await offloadToTask(
           {
             queue: opts.jobQueue,
@@ -496,7 +498,7 @@ export function createMcpServer(opts: McpServerOptions): Server {
               opts.servesTaskMethods !== false &&
               clientSupportsTasks(server.getClientCapabilities()),
           },
-          { tool: name, args: taskArgs, ctx },
+          { tool: name, args: taskArgs, ctx: taskCtx },
         );
         if (offloaded !== undefined) return offloaded;
       }

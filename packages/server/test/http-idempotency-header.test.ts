@@ -6,6 +6,7 @@ import { z } from "zod";
 import { FolderAcl } from "../src/acl";
 import { provisionCacheDb } from "../src/db/provision";
 import { ToolRegistry } from "../src/mcp/registry";
+import { offloadContext } from "../src/mcp/registry/idempotency";
 import { createHttpApp } from "../src/transports/http";
 import { openMemoryDb } from "./helpers";
 
@@ -113,8 +114,59 @@ it("refuses a header that disagrees with the argument, or is too long, without e
   const mismatch = await call("keyed", "header-value", { idempotency_key: "argument-value" });
   expect(mismatch.code).toBe("validation_error");
   expect(JSON.stringify(mismatch)).not.toMatch(/header-value|argument-value/);
-  expect((await call("keyed", "x".repeat(129))).code).toBe("validation_error");
+  const tooLong = await call("keyed", "x".repeat(129));
+  expect(tooLong.code).toBe("validation_error");
+  expect(JSON.stringify(tooLong)).not.toContain("x".repeat(129));
+  expect((await call("keyed", "")).code).toBe("validation_error");
   expect(counter.writes).toBe(0);
+});
+
+it("refuses a comma, which is how two differing header lines arrive", async () => {
+  const joined = await call("keyed", "first-key, second-key");
+  expect(joined.code).toBe("validation_error");
+  expect(JSON.stringify(joined)).not.toMatch(/first-key|second-key/);
+  expect(counter.writes).toBe(0);
+});
+
+it("ignores the header for a JSON-RPC batch: each item runs on its own", async () => {
+  const item = (id: number) => ({
+    jsonrpc: "2.0",
+    id,
+    method: "tools/call",
+    params: { name: "keyed", arguments: {} },
+  });
+  // A batch exists only in the legacy era: 2026-07-28 refuses one outright.
+  const send = () =>
+    handle.app.request("http://localhost/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+        "mcp-protocol-version": "2025-03-26",
+        "idempotency-key": "batch-key",
+      },
+      body: JSON.stringify([item(1), item(2)]),
+    });
+  await (await send()).text();
+  const afterFirst = counter.writes;
+  await (await send()).text();
+  // Were the header applied, the second batch (and the second item) would replay the first run.
+  expect(afterFirst).toBe(2);
+  expect(counter.writes).toBe(4);
+});
+
+it("an offloaded call carries the header only for a tool that takes a key, and only a valid one", () => {
+  const ctx = { idempotencyKeyHeader: "k", caller: "c" };
+  expect(offloadContext({}, { acceptsIdempotencyKey: true }, ctx)).toBe(ctx);
+  expect(offloadContext({}, { acceptsIdempotencyKey: false }, ctx)).toEqual({ caller: "c" });
+  expect(offloadContext({ idempotency_key: "other" }, { acceptsIdempotencyKey: true }, ctx)).toBe(
+    undefined,
+  );
+  const bare = { caller: "c" };
+  expect(offloadContext<{ caller: string; idempotencyKeyHeader?: string }>({}, {}, bare)).toBe(
+    bare,
+  );
 });
 
 it("ignores the header for a tool that accepts no key", async () => {
