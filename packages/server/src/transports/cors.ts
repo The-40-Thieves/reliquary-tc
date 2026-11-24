@@ -19,7 +19,24 @@ export function isCorsPath(path: string): boolean {
   );
 }
 
-const ALLOW_HEADERS = "Authorization, Content-Type, Mcp-Session-Id, Mcp-Protocol-Version";
+/** What the HTTP edge hands the per-request context factory through `authInfo.extra`.
+ *  `idempotencyKeyHeader` is the `Idempotency-Key` request header, left unset for a JSON-RPC
+ *  batch: a batch carries several calls and the one header cannot name one of them. `anonymous`
+ *  is set only for a request admitted without a credential; it is what makes the context
+ *  unauthenticated. `surface` names the `/mcp/<surface>` route the request came in on. */
+export interface HttpAuthExtra {
+  caller?: string | null;
+  vault?: string;
+  persona?: string;
+  verified?: boolean;
+  idempotencyKeyHeader?: string;
+  toolVisibility?: unknown;
+  surface?: string;
+  anonymous?: boolean;
+}
+
+const ALLOW_HEADERS =
+  "Authorization, Content-Type, Mcp-Session-Id, Mcp-Protocol-Version, Idempotency-Key";
 /** Response headers a page may read: the 401 challenge and the session id are not in the safelist. */
 const EXPOSE_HEADERS = "Mcp-Session-Id, WWW-Authenticate, Mcp-Protocol-Version";
 

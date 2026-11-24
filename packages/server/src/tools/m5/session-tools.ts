@@ -18,6 +18,7 @@ import type { CallerContext, ToolDefinition } from "../../mcp/registry";
 import { enforceMemoryDefense } from "../../util/memory-defense";
 import { ResponseFormatInput, resolveResponseFormat } from "../../util/response-format";
 import { enforcePathAcl } from "../../vault/acl-path";
+import { callerMayReadFile } from "../../vault/cas";
 import {
   appendTrace,
   cacheTraceRelPath,
@@ -81,7 +82,8 @@ const EndSessionOutput = z.object({
   session_id: z.string(),
   ended_at: z.number(),
   trace_path: z.string(),
-  event_count: z.number(),
+  /** Left out when the trace is a vault file the caller may not read. */
+  event_count: z.number().optional(),
   duration_ms: z.number(),
   redactions: z.number().int().nonnegative().optional(),
 });
@@ -303,7 +305,10 @@ export function buildSessionTools(deps: M5Deps): ToolDefinition[] {
           session_id: s.id,
           ended_at: now,
           trace_path: s.trace_path,
-          event_count: readTrace(abs).length,
+          ...(s.trace_store !== "vault" ||
+          callerMayReadFile(ctx, v.root, s.trace_path, "read:workspace")
+            ? { event_count: readTrace(abs).length }
+            : {}),
           duration_ms: now - s.started_at,
           ...(metaScan && metaScan.redactions > 0 ? { redactions: metaScan.redactions } : {}),
         };

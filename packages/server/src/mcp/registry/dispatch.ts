@@ -10,7 +10,7 @@ import { argsHash } from "../../hash";
 import { type OtelDetail, openDispatchSpans } from "../../otel/dispatch-spans";
 import { callerHash, type RateLimiter } from "../../throttle";
 import { checkAborted } from "../../util/abort";
-import { isCrossNoteAuditExempt, runAudited } from "../../vault/acl-audit";
+import { isCrossNoteAuditExempt, runAudited, runDeclaring } from "../../vault/acl-audit";
 import { NO_OUTPUT_TEXT } from "../no-output-text";
 import type { EffectiveToolVisibilityConfig } from "../visibility";
 import { isToolDisabledFor, runAuthorizationGates } from "./authorization-gates";
@@ -25,10 +25,12 @@ import { releaseSpentElicit, trackElicitSpend } from "./elicit-release";
 import {
   claimOrReplay,
   deleteIdempotency,
-  extractIdempotencyKey,
   finalizeIdempotency,
   finalizeIndeterminate,
   type IdempotencyOwner,
+  idempotencyArgs,
+  idempotencyKeyOf,
+  legacyIdempotencyHashes,
   markEffectCommitted,
   readIdempotency,
 } from "./idempotency";
@@ -263,7 +265,7 @@ export async function runDispatch(
     // stay authoritative on replays) but BEFORE throttle/HITL: the lock must be taken before the
     // single-use elicit token is consumed, or two concurrent identical requests could each
     // consume it (TOCTOU). The row is the caller's own: its principal is part of the key.
-    idemKey = extractIdempotencyKey(inputData);
+    idemKey = idempotencyKeyOf(inputData, def, ctx);
     if (idemKey) {
       spans?.stage("idempotency");
       idemPrincipal = requireIdentifiedCaller(ctx, "idempotency_key");
@@ -275,13 +277,16 @@ export async function runDispatch(
         idemAt(),
         idemKey,
         name,
-        hash,
+        def.acceptsIdempotencyKey ? argsHash(name, idempotencyArgs(recordedInput ?? {})) : hash,
         // The clock FUNCTION, not one sample: claimOrReplay reads it at each of its four points so
         // a stateful ctx.now is observed as before (cross-vendor review, WP4.2).
         now,
         deps.idempotencyTtlMs,
         deps.idempotencyReclaimMs,
         deps.maxResponseBytes,
+        def.acceptsIdempotencyKey
+          ? legacyIdempotencyHashes(name, recordedInput ?? {}, idemKey)
+          : [],
       );
       switch (claim.kind) {
         case "claimed":
@@ -455,7 +460,7 @@ export async function runDispatch(
       },
       async () => {
         spans?.stage("acl_eval");
-        enforceCentralPathAcl(def, inputData, ctx, deps.rootResolver);
+        runDeclaring(() => enforceCentralPathAcl(def, inputData, ctx, deps.rootResolver));
         // THE-514: the last chance to bail before the handler — and any side effect — runs.
         // idemClaimed's claim is still pre-effect here, so the catch below deletes it cleanly.
         checkAborted(ctx.signal);

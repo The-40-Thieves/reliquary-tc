@@ -1,5 +1,6 @@
 import { ReliquaryTcError } from "@the-40-thieves/reliquary-tc-shared";
 import { cachedPrepare, type Database } from "../../db/types";
+import { argsHash } from "../../hash";
 import type { IdempotencyState } from "./types";
 
 // WP4.2: the idempotency primitives pulled out of ToolRegistry, unchanged, plus one new function —
@@ -39,6 +40,76 @@ export function extractIdempotencyKey(data: unknown): string | undefined {
     if (typeof nested === "string" && nested.length > 0) return nested;
   }
   return undefined;
+}
+
+/** The key a call carries: its argument (any of the three locations), else the HTTP
+ *  `Idempotency-Key` header when the tool accepts a key. A tool that accepts none ignores the
+ *  header; a header that disagrees with the argument is refused rather than silently outvoted. */
+export function idempotencyKeyOf(
+  input: unknown,
+  def: { acceptsIdempotencyKey?: boolean },
+  ctx: { idempotencyKeyHeader?: string },
+): string | undefined {
+  const argument = extractIdempotencyKey(input);
+  const header = def.acceptsIdempotencyKey ? ctx.idempotencyKeyHeader : undefined;
+  if (header === undefined) return argument;
+  // Repeated header lines reach here joined with a comma, so a comma means the request may have
+  // carried two different keys. Refused, since a retry sending one of them would not match.
+  if (header.length < 1 || header.length > 128 || header.includes(","))
+    throw new ReliquaryTcError("validation_error", "invalid idempotency header");
+  if (argument !== undefined && argument !== header)
+    throw new ReliquaryTcError("validation_error", "idempotency header and argument disagree");
+  return header;
+}
+
+/**
+ * The context an offloaded call takes into its job row. The header crosses only for a tool that
+ * takes a key and only when dispatch would accept it; a tool that ignores it does not carry it.
+ * `undefined` means the header would be refused, so the call must run synchronously, where
+ * dispatch gives that refusal itself instead of a task that fails later.
+ */
+export function offloadContext<C extends { idempotencyKeyHeader?: string }>(
+  input: unknown,
+  def: { acceptsIdempotencyKey?: boolean },
+  ctx: C,
+): C | undefined {
+  if (ctx.idempotencyKeyHeader === undefined) return ctx;
+  if (!def.acceptsIdempotencyKey) {
+    const { idempotencyKeyHeader: _header, ...rest } = ctx;
+    return rest as C;
+  }
+  try {
+    idempotencyKeyOf(input, def, ctx);
+    return ctx;
+  } catch {
+    return undefined;
+  }
+}
+
+export function idempotencyArgs(data: unknown): unknown {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return data;
+  const {
+    idempotency_key: _key,
+    bulk_idempotency_key: _bulk,
+    ...rest
+  } = data as Record<string, unknown>;
+  if (rest.options && typeof rest.options === "object" && !Array.isArray(rest.options)) {
+    const { idempotency_key: _nested, ...options } = rest.options as Record<string, unknown>;
+    if (Object.keys(options).length === 0) delete rest.options;
+    else rest.options = options;
+  }
+  return rest;
+}
+
+export function legacyIdempotencyHashes(name: string, data: unknown, key: string): string[] {
+  const base = idempotencyArgs(data) as Record<string, unknown>;
+  const options = base.options;
+  const nested = options && typeof options === "object" && !Array.isArray(options) ? options : {};
+  return [
+    argsHash(name, { ...base, idempotency_key: key }),
+    argsHash(name, { ...base, bulk_idempotency_key: key }),
+    argsHash(name, { ...base, options: { ...nested, idempotency_key: key } }),
+  ];
 }
 
 /** Whose row it is: a key is unique per (vault, principal), so one caller's key can never claim,
@@ -185,6 +256,7 @@ export function claimOrReplay(
   ttlMs: number,
   reclaimMs: number,
   maxResponseBytes: number,
+  legacyHashes: string[] = [],
 ): IdempotencyClaimResult {
   // Caught by cross-vendor review of WP4.2, and regression-tested by "reclaims using a LIVE clock
   // across claim/read/retry, not one frozen sample" in idempotency.test.ts. The original inline
@@ -215,7 +287,11 @@ export function claimOrReplay(
   }
 
   if (!row) return { kind: "in_flight" };
-  if (row.tool_name !== tool || row.args_hash !== argsHashValue) return { kind: "mismatch" };
+  if (
+    row.tool_name !== tool ||
+    (row.args_hash !== argsHashValue && !legacyHashes.includes(row.args_hash))
+  )
+    return { kind: "mismatch" };
   if (row.state === "indeterminate" || row.state === "effect_committed")
     return { kind: "replay", outcome: "indeterminate" };
   if (row.completed_at != null) {

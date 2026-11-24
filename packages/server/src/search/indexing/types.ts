@@ -51,6 +51,8 @@ export interface IndexStats {
   notes_frontmatter_failed: number;
   frontmatter_failures: Array<{ path: string; error: string }>;
   notes_read_refused: number;
+  notes_read_failed?: number;
+  read_failures?: Array<{ path: string; error: string }>;
   read_refusals: Array<{ path: string; error: string }>;
   model: string;
   dimensions: number;

@@ -8,6 +8,7 @@ import { test } from "node:test";
 import {
   addLicenseToPlatformPackages,
   buildCrateLicenseText,
+  cargoPath,
   crateLicenseProblem,
   linkedCrates,
   NATIVE_LICENSE_FILE,
@@ -156,6 +157,22 @@ test("a crate that publishes no text takes the reviewed one filed for it", () =>
     writeFileSync(join(root, "napi-rs.txt"), "REVIEWED NAPI TEXT\n");
     const text = buildCrateLicenseText({ metadata, overridesDir: root, project: PROJECT });
     assert.ok(text.includes("REVIEWED NAPI TEXT"));
+  });
+});
+
+test("cargo is run by its full path, never looked up on PATH", () => {
+  withRoot((root) => {
+    const exe = process.platform === "win32" ? "cargo.exe" : "cargo";
+    const home = join(root, "cargo-home");
+    mkdirSync(join(home, "bin"), { recursive: true });
+    writeFileSync(join(home, "bin", exe), "");
+    const named = join(root, exe);
+    writeFileSync(named, "");
+    assert.equal(cargoPath({ CARGO_HOME: home }), join(home, "bin", exe));
+    assert.equal(cargoPath({ CARGO: named, CARGO_HOME: home }), named);
+    // A bare name would be a PATH lookup, and a path that is not there is not guessed at.
+    assert.throws(() => cargoPath({ CARGO: "cargo" }), /CARGO must be a full path/);
+    assert.throws(() => cargoPath({ CARGO_HOME: join(root, "empty") }), /cargo was not found/);
   });
 });
 

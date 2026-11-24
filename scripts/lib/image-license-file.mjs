@@ -5,15 +5,7 @@
 // copied in as folders, so the list is read from the folders themselves: every package directory
 // in each tree, however it got there. The server build's own list (its source maps) is added so
 // one file covers the image.
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ORT_NOTE, OVERRIDE_ALIASES, OVERRIDES_DIR } from "./binary-license-file.mjs";
 import { sourceMapInputs } from "./server-dist-license-file.mjs";
@@ -112,18 +104,17 @@ function sqliteVecExtra(dir) {
 }
 
 /**
- * Write the image's licence file to `outFile` and return `{ path, packages }`. `trees` are the
- * node_modules folders the image copies; `serverDist` is the built server. Throws when the list
- * cannot be completed, and then leaves no file behind.
+ * The image's licence file as `{ text, packages }`. `trees` are the node_modules folders the image
+ * copies; `serverDist` is the built server. Throws when the list cannot be completed. Nothing is
+ * written here: the caller prints the text and the image build redirects it, so no path from the
+ * command line is ever removed or written.
  */
-export function writeImageLicenseFile({
-  outFile,
+export function buildImageLicenseFile({
   trees,
   serverDist,
   repoRoot,
   overridesDir = OVERRIDES_DIR,
 }) {
-  rmSync(outFile, { force: true });
   const dirs = trees.flatMap(packageDirsInTree);
   const source = {
     inputs: [
@@ -147,6 +138,5 @@ export function writeImageLicenseFile({
       notice: readFileSync(join(repoRoot, "NOTICE"), "utf8"),
     },
   });
-  writeFileSync(outFile, text);
-  return { path: outFile, packages: collectThirdParty(source).packages.length };
+  return { text, packages: collectThirdParty(source).packages.length };
 }

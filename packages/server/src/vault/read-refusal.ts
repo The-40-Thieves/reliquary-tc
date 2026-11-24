@@ -2,9 +2,7 @@
 // whole call. The walk lists a note under its symlink-resolved identity; the read goes through the
 // safe open, which refuses an unconfigured symlinked folder (`wiki -> pages`) and a hard link to a
 // file outside the vault. Only acl_denied is caught here: every other error (ENOENT for a note
-// deleted mid-pass, a non-regular file) propagates unchanged. Under the native module an ordinary I/O
-// failure on a regular file also surfaces as acl_denied, so it is skipped and counted; only the JS
-// fallback propagates it.
+// deleted mid-pass, a non-regular file, or an I/O fault) propagates unchanged.
 import { ReliquaryTcError } from "@the-40-thieves/reliquary-tc-shared";
 import { errorMessage } from "../util/errors";
 import { readNote, readNoteBounded } from "./notes-io";

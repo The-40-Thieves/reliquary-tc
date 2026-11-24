@@ -34,4 +34,9 @@ export function logPassSkips(vaultId: string, stats: IndexStats): void {
         "the safe open refused the read",
       ),
     );
+  const failed = stats.notes_read_failed ?? 0;
+  if (failed > 0)
+    process.stderr.write(
+      sampleLine(vaultId, failed, stats.read_failures ?? [], "the read hit an I/O fault"),
+    );
 }

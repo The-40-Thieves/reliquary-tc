@@ -12,6 +12,7 @@
 
 import type { FolderAcl } from "../acl";
 import { foldPath, globPredicate } from "../acl";
+import { resolveConventions } from "../conventions/resolve";
 import { resolvePeriodicConfig } from "../formats/periodic";
 import { drainSteps, type ScanSteps } from "../util/scan-steps";
 import { readableEntry } from "../vault/acl-read-filter";
@@ -23,7 +24,8 @@ import {
   normalizeLinkTarget,
   resolveTarget,
 } from "../vault/links";
-import { normalizeVaultPath, walkVaultSteps } from "../vault/paths";
+import { readNote } from "../vault/notes-io";
+import { normalizeVaultPath, resolveVaultPath, walkVaultSteps } from "../vault/paths";
 import { matchHeadingBoundary } from "./m1/notes/heading-syntax";
 import { isGeneratedWikiPath, rawPathFilter } from "./m7/knowledge/wiki-folder";
 import { isGeneratedPage } from "./m7/knowledge/wiki-generated-seal";
@@ -32,6 +34,7 @@ import type { ScanWarnings } from "./scan-warnings";
 /** Who is scanning: the vault root plus the caller's read ACL. */
 export interface ScanScope {
   root: string;
+  vaultId?: string | undefined;
   acl: FolderAcl | undefined;
   grantedScopes: Iterable<string>;
   /** The vault's wiki folder: its generated index.md / log.md are never the subject of a scan. */
@@ -248,7 +251,7 @@ export const PROVENANCE_DEFAULT_EXCLUDE = [
 ];
 
 interface ProvenanceScanOpts {
-  field: string;
+  field?: string | undefined;
   include?: string[] | undefined;
   exclude?: string[] | undefined;
   folder?: string | undefined;
@@ -269,6 +272,7 @@ export interface ProvenanceScan {
   /** Claim-bearing notes without the field whose body cites evidence. */
   bodyOnly: Array<{ path: string; evidence: BodyEvidence[] }>;
   skippedByType: number;
+  fieldAliases: Record<string, string>;
   byFolder: Map<string, { scanned: number; missing: number }>;
 }
 
@@ -312,8 +316,12 @@ export function bodyEvidence(body: string): BodyEvidence[] {
 }
 
 /** Frontmatter `type` is a string equal to one of `types`, or an array containing one. */
-function typeMatches(fm: Record<string, unknown> | null, types: ReadonlySet<string>): boolean {
-  const t = fm?.type;
+function typeMatches(
+  fm: Record<string, unknown> | null,
+  types: ReadonlySet<string>,
+  key: string,
+): boolean {
+  const t = fm?.[key];
   if (typeof t === "string") return types.has(t);
   return Array.isArray(t) && t.some((x) => typeof x === "string" && types.has(x));
 }
@@ -322,6 +330,25 @@ function typeMatches(fm: Record<string, unknown> | null, types: ReadonlySet<stri
 function dailyFolderPrefix(root: string, fold: ReturnType<typeof classificationFold>): string {
   try {
     const folder = normalizeVaultPath(resolvePeriodicConfig(root, "daily").config.folder);
+    return folder ? `${foldPath(folder, fold)}/` : "";
+  } catch {
+    return "";
+  }
+}
+
+function templateFolderPrefix(
+  root: string,
+  path: string,
+  key: string,
+  fold: ReturnType<typeof classificationFold>,
+): string {
+  try {
+    const config = JSON.parse(readNote(resolveVaultPath(root, path)).raw) as Record<
+      string,
+      unknown
+    >;
+    const value = config?.[key];
+    const folder = typeof value === "string" ? normalizeVaultPath(value.trim()) : "";
     return folder ? `${foldPath(folder, fold)}/` : "";
   } catch {
     return "";
@@ -340,11 +367,21 @@ export function* scanProvenanceSteps(
 ): ScanSteps<ProvenanceScan> {
   const fold = classificationFold(scope.caseInsensitive);
   const dailyPrefix = dailyFolderPrefix(scope.root, fold);
+  const templatePrefixes = [
+    templateFolderPrefix(scope.root, ".obsidian/templates.json", "folder", fold),
+    templateFolderPrefix(
+      scope.root,
+      ".obsidian/plugins/templater-obsidian/data.json",
+      "templates_folder",
+      fold,
+    ),
+  ];
   const exclude = [...PROVENANCE_DEFAULT_EXCLUDE, ...(opts.exclude ?? [])];
   const includeMatch = (opts.include ?? []).map((g) => globPredicate(g));
   const excludeMatch = exclude.map((g) => globPredicate(g));
   const inScope = (rel: string): boolean => {
-    if (dailyPrefix && foldPath(rel, fold).startsWith(dailyPrefix)) return false;
+    if ([dailyPrefix, ...templatePrefixes].some((p) => p && foldPath(rel, fold).startsWith(p)))
+      return false;
     if (includeMatch.length && !includeMatch.some((m) => m(rel))) return false;
     return !excludeMatch.some((m) => m(rel));
   };
@@ -361,8 +398,20 @@ export function* scanProvenanceSteps(
       !isRaw(p),
   );
   const types = opts.types ? new Set(opts.types) : undefined;
+  // Notes in one folder share their conventions, so the type key is resolved once per folder.
+  const typeKeys = new Map<string, string>();
+  const typeKeyFor = (vaultId: string, rel: string): string => {
+    const dir = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
+    let key = typeKeys.get(dir);
+    if (key === undefined) {
+      key = resolveConventions({ ...scope, vaultId }, rel).typeKey;
+      typeKeys.set(dir, key);
+    }
+    return key;
+  };
   const byFolder = new Map<string, { scanned: number; missing: number }>();
   const missing: string[] = [];
+  const fieldAliases: Record<string, string> = {};
   const bodyOnly: Array<{ path: string; evidence: BodyEvidence[] }> = [];
   let scanned = 0;
   let skippedByType = 0;
@@ -377,7 +426,8 @@ export function* scanProvenanceSteps(
     }
     const parsed = warnings.parse(raw, rel);
     const fm = parsed.frontmatter;
-    if (types && !typeMatches(fm, types)) {
+    const typeKey = types && scope.vaultId ? typeKeyFor(scope.vaultId, rel) : "type";
+    if (types && !typeMatches(fm, types, typeKey)) {
       skippedByType++;
       yield;
       continue;
@@ -386,8 +436,14 @@ export function* scanProvenanceSteps(
     const top = rel.split("/")[0] ?? "";
     const folder = byFolder.get(top) ?? { scanned: 0, missing: 0 };
     folder.scanned++;
-    if (fmHas(fm, opts.field)) withField++;
-    else {
+    const field = [
+      opts.field ?? "sources",
+      ...(opts.field === undefined ? ["source", "references"] : []),
+    ].find((key) => fmHas(fm, key));
+    if (field) {
+      withField++;
+      if (field !== (opts.field ?? "sources")) fieldAliases[rel] = field;
+    } else {
       const evidence = bodyEvidence(parsed.body);
       if (evidence.length) bodyOnly.push({ path: rel, evidence });
       else {
@@ -408,6 +464,7 @@ export function* scanProvenanceSteps(
     missing,
     bodyOnly,
     skippedByType,
+    fieldAliases,
     byFolder,
   };
 }

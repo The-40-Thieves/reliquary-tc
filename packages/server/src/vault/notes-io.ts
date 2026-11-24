@@ -33,6 +33,7 @@ import { existsNoFollow } from "../auth/key-files";
 import type { MetricsRecorder } from "../metrics/registry";
 import { enforceMemoryDefenseOnNoteWrite } from "../util/memory-defense";
 import { redactSecrets } from "../util/redact";
+import { recordPathOp } from "./acl-audit";
 import { vaultDetailPath } from "./folder-links";
 import {
   type NativeVaultIo,
@@ -43,6 +44,7 @@ import {
   probePath,
   refuseJsThroughPin,
 } from "./native-io";
+import { readIo, readIoError } from "./native-read-error";
 import {
   assertPinnedFolderNames,
   verifyWalkedDirectories,
@@ -50,6 +52,7 @@ import {
 } from "./no-follow-walk";
 import { assertCreatableName, contentHash } from "./paths";
 import { O_NOFOLLOW, removeTemp, writeAll, writeTempFile } from "./temp-write";
+import { splitTrashName } from "./trash-name";
 import { gateNoteWrite, markBeforeNoteWrite, preflightNoteWrite } from "./write-gate";
 
 // O_NOFOLLOW and O_NONBLOCK are POSIX-only (undefined on Windows Node): 0 is a no-op there, and the
@@ -71,8 +74,7 @@ const fallbackReadRefused = (message: string, abs: string): ReliquaryTcError =>
   err.aclDenied(`safe open refused the path: ${message}`, { path: vaultDetailPath(abs) });
 
 function openRegularRead(abs: string): { fd: number; stat: BigIntStats } {
-  // O_NONBLOCK prevents a swapped FIFO from hanging open; Linux/macOS ignore it for regular-file
-  // reads, so it does not need to be cleared after fstat.
+  // O_NONBLOCK stops a swapped FIFO hanging the open; regular-file reads ignore it, so it stays set.
   const fd = openSync(abs, constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
   try {
     const stat = fstatSync(fd, { bigint: true });
@@ -115,6 +117,7 @@ function relativeEnoent(e: unknown, detail: string, abs: string): unknown {
 
 /** Classify a native refusal without following any component while deciding ENOENT vs refusal. */
 function mapNativeReadError(e: unknown, abs: string): never {
+  if ((e as Error)?.message?.startsWith("io:")) throw readIoError(e, abs);
   // Classify the path the native open actually walked: under a configured pinned folder that is
   // the real directory, not the alias spelling, so a missing note there stays ENOENT.
   const path = normalize(nativeOpen(abs).path);
@@ -236,10 +239,10 @@ export function readNote(abs: string): { raw: string; hash: string } {
       mapNativeReadError(e, abs);
     }
   }
-  const fd = fallbackOpen(abs);
+  const fd = readIo(() => fallbackOpen(abs), abs);
   try {
-    assertRegularSingleLink(fd, abs);
-    const raw = readFileSync(fd, "utf8");
+    readIo(() => assertRegularSingleLink(fd, abs), abs);
+    const raw = readIo(() => readFileSync(fd, "utf8"), abs);
     return { raw, hash: contentHash(raw) };
   } finally {
     closeSync(fd);
@@ -256,13 +259,13 @@ export function readNoteBounded(abs: string, maxBytes: number): { raw: string | 
       mapNativeReadError(e, abs);
     }
   }
-  const fd = fallbackOpen(abs);
+  const fd = readIo(() => fallbackOpen(abs), abs);
   try {
-    assertRegularSingleLink(fd, abs);
+    readIo(() => assertRegularSingleLink(fd, abs), abs);
     const buf = Buffer.allocUnsafe(maxBytes + 1);
     let n = 0;
     while (n < buf.length) {
-      const got = readSync(fd, buf, n, buf.length - n, null);
+      const got = readIo(() => readSync(fd, buf, n, buf.length - n, null), abs);
       if (got === 0) break;
       n += got;
     }
@@ -281,10 +284,10 @@ export function readFileChecked(abs: string): Buffer {
       mapNativeReadError(e, abs);
     }
   }
-  const fd = fallbackOpen(abs);
+  const fd = readIo(() => fallbackOpen(abs), abs);
   try {
-    assertRegularSingleLink(fd, abs);
-    return readFileSync(fd);
+    readIo(() => assertRegularSingleLink(fd, abs), abs);
+    return readIo(() => readFileSync(fd), abs);
   } finally {
     closeSync(fd);
   }
@@ -389,6 +392,7 @@ export function writeFileAtomic(
   createDirs = true,
   opts: WriteFileOpts = {},
 ): void {
+  recordPathOp("write", abs);
   if (!opts.ungated) gateNoteWrite(abs, data);
   // Backstop for writers that skipped enforcePathAcl("write"): creating a Windows-hostile leaf name
   // is refused here too (an existing file stays updatable in place).
@@ -462,6 +466,7 @@ export function stageNoteWrite(
   let settled = false;
   return {
     commit() {
+      recordPathOp("write", abs);
       if (settled) throw new Error("staged write already settled");
       settled = true;
       try {
@@ -483,9 +488,14 @@ export function stageNoteWrite(
 /**
  * Move `fromAbs` onto `toAbs` WITHOUT replacing an existing target or following a symlink in either
  * path (native: parents opened no-follow; JS: lstat'ed components, then link + unlink). An occupied
- * target throws note_exists. The primitive behind trashNote and its rollback.
+ * target throws note_exists. The primitive behind trashNote and its rollback. `fromOp` is what
+ * the ACL audit holds the caller to on `fromAbs`: moving a file aside as a step of writing it is a
+ * write, not a delete.
  */
-export function moveNoReplace(fromAbs: string, toAbs: string): void {
+type SourceOp = "delete" | "write";
+export function moveNoReplace(fromAbs: string, toAbs: string, fromOp: SourceOp = "delete"): void {
+  recordPathOp(fromOp, fromAbs);
+  recordPathOp("write", toAbs);
   if (nativeIo?.safeRenameNoReplace) {
     try {
       const from = nativeOpen(fromAbs);
@@ -622,22 +632,13 @@ export function statNote(abs: string): NoteStat | null {
   }
 }
 
-/** Stem and extension of a vault path: trashNote inserts ` (n)` between them on a collision. */
-function splitTrashName(relPath: string): { stem: string; ext: string } {
-  const dot = relPath.lastIndexOf(".");
-  const slash = relPath.lastIndexOf("/");
-  return dot > slash
-    ? { stem: relPath.slice(0, dot), ext: relPath.slice(dot) }
-    : { stem: relPath, ext: "" };
-}
-
 /**
  * Soft-delete: move a note into the vault's `.trash/` mirror (Obsidian trash). Returns the
  * vault-relative trash path. A name collision gets a ` (n)` suffix, chosen by the no-replace move
  * itself refusing an occupied name (no check-then-rename window). A symlinked `.trash` (or any
  * symlinked component) is refused, never followed.
  */
-export function trashNote(root: string, relPath: string): string {
+export function trashNote(root: string, relPath: string, op: SourceOp = "delete"): string {
   const { stem, ext } = splitTrashName(relPath);
   const src = join(root, relPath);
   for (let i = 0; ; i++) {
@@ -645,7 +646,7 @@ export function trashNote(root: string, relPath: string): string {
     const dest = join(root, ".trash", candidate);
     ensureDirNoFollow(dirname(dest));
     try {
-      moveNoReplace(src, dest);
+      moveNoReplace(src, dest, op);
       return `.trash/${candidate}`;
     } catch (e) {
       if (!(e instanceof ReliquaryTcError && e.code === "note_exists") || i >= 10_000) throw e;
@@ -709,7 +710,7 @@ export function replaceDestination<T = void>(args: {
   checkText?: string;
 }): { trashedTo: string | null; value: T } {
   if (args.checkText !== undefined) preflightNoteWrite(args.toAbs, args.checkText);
-  const trashedTo = args.replacing ? trashNote(args.root, args.toRel) : null;
+  const trashedTo = args.replacing ? trashNote(args.root, args.toRel, "write") : null;
   let value: T;
   try {
     value = args.write({ exclusive: true, replacesExisting: trashedTo !== null });
@@ -734,6 +735,7 @@ export function replaceDestination<T = void>(args: {
  * primitive a path through a pinned folder is refused (vault/native-io.ts).
  */
 export function hardDelete(abs: string): void {
+  recordPathOp("delete", abs);
   if (nativeIo?.safeUnlink) {
     const { path, pinned } = nativeOpen(abs);
     try {

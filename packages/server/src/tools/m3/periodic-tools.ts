@@ -33,7 +33,7 @@ import { enforceMemoryDefenseOnNoteWrite, MEMORY_DEFENSE_OFF } from "../../util/
 import { ResponseFormatInput, resolveResponseFormat } from "../../util/response-format";
 import { enforcePathAcl } from "../../vault/acl-path";
 import { readableResolved } from "../../vault/acl-read-filter";
-import { callerMayReadNote, requireContentRead } from "../../vault/cas";
+import { callerMayReadFile, callerMayReadNote, requireContentRead } from "../../vault/cas";
 import { parseNote } from "../../vault/frontmatter";
 import {
   hardDelete,
@@ -255,7 +255,8 @@ const AppendToPeriodicNoteOutput = z.object({
   date: z.string(),
   path: z.string(),
   updated_at: z.string(),
-  appended_bytes: z.number().int(),
+  /** Left out for a caller who may not read a note that already existed: it depends on its bytes. */
+  appended_bytes: z.number().int().optional(),
   created: z.boolean(),
   ...RedactionsField,
   ...conventionsResultShape,
@@ -503,15 +504,11 @@ export function buildPeriodicTools(deps: M3Deps): ToolDefinition[] {
           }
           // same template-can-carry-a-secret guard as create_periodic_note above.
           const mdConfig = deps.memoryDefense?.(v.id) ?? MEMORY_DEFENSE_OFF;
+          const opt = { metrics: deps.metrics, mark: ctx.markEffectCommitted, exclusive: true };
           if (!expanded) {
-            // Exclusive: a note another process created after the noteExists check above is FOUND,
-            // never replaced by the template (create_periodic_note commits the same way).
+            // Exclusive: a note created since the noteExists check above is found, not replaced.
             try {
-              const scan = writeNoteAtomicGuarded(abs, resolved.path, content, true, mdConfig, {
-                metrics: deps.metrics,
-                mark: ctx.markEffectCommitted,
-                exclusive: true,
-              });
+              const scan = writeNoteAtomicGuarded(abs, resolved.path, content, true, mdConfig, opt);
               deps.reindex?.(v.id, resolved.path, scan.content);
               redactions = scan.redactions;
               created = true;
@@ -642,12 +639,15 @@ export function buildPeriodicTools(deps: M3Deps): ToolDefinition[] {
         }
         deps.reindex?.(v.id, resolved.path, scan.content);
         ctx.noteWritten?.(resolved.path);
+        const appended = Buffer.byteLength(scan.content, "utf8") - Buffer.byteLength(base, "utf8");
+        const mayCount =
+          created || mayRead || callerMayReadFile(ctx, v.root, resolved.path, "read:periodic");
         return {
           period: input.period,
           date: toISODate(date),
           path: resolved.path,
           updated_at: new Date().toISOString(),
-          appended_bytes: Buffer.byteLength(scan.content, "utf8") - Buffer.byteLength(base, "utf8"),
+          ...(mayCount ? { appended_bytes: appended } : {}),
           created,
           ...(scan.redactions > 0 ? { redactions: scan.redactions } : {}),
         };

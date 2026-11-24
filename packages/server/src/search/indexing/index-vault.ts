@@ -199,6 +199,7 @@ export async function indexVault(args: IndexVaultArgs): Promise<IndexStats> {
     notes_frontmatter_failed: 0,
     frontmatter_failures: [],
     notes_read_refused: 0,
+    notes_read_failed: 0,
     read_refusals: [],
     model: args.provider.id,
     dimensions: args.provider.dimensions,
