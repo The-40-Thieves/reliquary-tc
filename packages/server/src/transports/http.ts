@@ -41,7 +41,7 @@ import {
   serveTaskSubscription,
   subscribesToTasks,
 } from "../mcp/tasks";
-import { type AdvertiseSubset, type UrlSurface, urlSurfaceFor } from "../mcp/tool-profiles";
+import { type AdvertiseSubset, urlSurfaceFor } from "../mcp/tool-profiles";
 import type { VisibilityCaller } from "../mcp/visibility";
 import type { MetricsRecorder } from "../metrics/registry";
 import type { JobQueue } from "../scheduler/job-queue";
@@ -148,8 +148,9 @@ export interface HttpAppOptions {
   facadeMode?: FacadeMode | "auto";
   /** THE-1123: only consulted when `facadeMode` is "auto", threaded to createMcpServer. */
   autoClients?: Readonly<Record<string, FacadeMode>>;
-  /** `toolFacade.explainAutoMode`, threaded to createMcpServer. */
+  /** `toolFacade.explainAutoMode` and `toolFacade.openaiMentions`, threaded to createMcpServer. */
   explainAutoMode?: boolean;
+  openaiMentions?: boolean;
   /** `toolFacade.outputSchema`, threaded to createMcpServer. */
   outputSchema?: "full" | "omit";
   /** `toolFacade.advertise`: the default tool-budget subset for `/mcp`; a `/mcp/<surface>` URL wins. */
@@ -301,8 +302,7 @@ function surfaceOptions(
   authInfo: HttpAuthInfo,
 ): { facadeMode?: FacadeMode | "auto"; advertise?: AdvertiseSubset } {
   const name = authInfo?.extra?.surface;
-  const surface: UrlSurface | undefined =
-    typeof name === "string" ? urlSurfaceFor(name) : undefined;
+  const surface = typeof name === "string" ? urlSurfaceFor(name) : undefined;
   return surface
     ? { facadeMode: surface.mode, advertise: surface.advertise }
     : { facadeMode: opts.facadeMode, advertise: opts.advertise };
@@ -488,6 +488,7 @@ export function createHttpApp(opts: HttpAppOptions): HttpApp {
         autoClients: opts.autoClients,
         triadHotPath: opts.triadHotPath,
         explainAutoMode: opts.explainAutoMode,
+        openaiMentions: opts.openaiMentions,
         securitySchemes: mixedAuth,
         outputSchema: opts.outputSchema,
         responseFormat: opts.responseFormat,
