@@ -23,6 +23,7 @@ import {
   clientSupportsSampling,
   emitLog,
   type RequestLog,
+  requestClientCapabilities,
   sampleViaClient,
 } from "./client-features";
 import {
@@ -581,9 +582,8 @@ export function createMcpServer(opts: McpServerOptions): Server {
         opts.registry.visibilityConfig(),
         visibilityCallerOf(ctx),
       );
-    // The SDK consumes the SEP-2575 envelope keys before a handler sees `params._meta`, so client
-    // capabilities are read from its own accessor rather than re-parsed off the wire.
-    const canElicit = clientSupportsFormElicitation(server.getClientCapabilities());
+    const declared = requestClientCapabilities(server, extra.mcpReq.envelope);
+    const canElicit = clientSupportsFormElicitation(declared);
     // SEP-2575: this request's log sink. The SDK suppresses the notification when the request
     // carried no `io.modelcontextprotocol/logLevel`, which is the MUST NOT we would otherwise break.
     const log = (extra.mcpReq as { log?: RequestLog }).log;

@@ -25,7 +25,19 @@
 // because this transport is stateless and that session key never comes back. See
 // docs/MCP-CLIENT-COMPAT-MATRIX.md (Finding 2, THE-725/THE-862) and
 // mcp-client-compat-matrix.test.ts for both eras asserted from code.
-import type { Server } from "@modelcontextprotocol/server";
+import { CLIENT_CAPABILITIES_META_KEY, type Server } from "@modelcontextprotocol/server";
+
+/**
+ * The capabilities this request's client declared: the 2026-07-28 per-request envelope when present,
+ * else the handshake's. Modern stdio never seeds the handshake slot, so the envelope is the only source there.
+ */
+export function requestClientCapabilities(server: Server, envelope: unknown): unknown {
+  if (envelope !== null && typeof envelope === "object") {
+    const declared = (envelope as Record<string, unknown>)[CLIENT_CAPABILITIES_META_KEY];
+    if (declared !== null && typeof declared === "object") return declared;
+  }
+  return (server as unknown as { getClientCapabilities: () => unknown }).getClientCapabilities();
+}
 
 /** The RFC 5424 levels the spec defines, ordered least to most severe. */
 export const LOG_LEVELS = [
