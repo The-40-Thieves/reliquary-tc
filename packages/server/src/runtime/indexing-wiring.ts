@@ -39,6 +39,7 @@ import {
 import { indexAclIdentity } from "../search/indexing/acl-path-sync";
 import { buildRepresentationManifest, type RepresentationManifest } from "../search/representation";
 import { ensureVecChunks, type VecRebuildEvent } from "../search/vec";
+import { createNoteChangeDedup } from "../vault/note-change-dedup";
 import type { ResourceChangeBus } from "../vault/note-changes";
 import { ACL_PATH_UNRESOLVED } from "../vault/stored-acl-path";
 import { registerVaultWatch } from "../vault/watcher";
@@ -395,8 +396,10 @@ export function wireIndexCoordinator(deps: IndexCoordinatorDeps): IndexCoordinat
     (vaultId: string): ((rel: string) => boolean) =>
     (rel) =>
       indexReadableFor(vaultId)(aclRelFor(vaultId, rel) ?? rel);
-  const publishChange = (vaultId: string, path: string): void => {
+  const changeDedup = createNoteChangeDedup();
+  const publishChange = (vaultId: string, path: string, content: string | null): void => {
     try {
+      if (!changeDedup.isNewState(vaultId, path, content)) return;
       deps.resourceChangeBus?.publish({ vaultId, relPath: path });
     } catch {}
   };
@@ -408,11 +411,11 @@ export function wireIndexCoordinator(deps: IndexCoordinatorDeps): IndexCoordinat
     delete: (vaultId, path) => indexCoordinator.submitDelete(vaultId, path),
   });
   const reindexHook = (vaultId: string, path: string, content: string): void => {
-    publishChange(vaultId, path);
+    publishChange(vaultId, path, content);
     reindexGated(vaultId, path, content);
   };
   const deindexHook = (vaultId: string, path: string): void => {
-    publishChange(vaultId, path);
+    publishChange(vaultId, path, null);
     indexCoordinator.submitDelete(vaultId, path);
   };
   // F1 (fix round 2): a SEPARATE ACL-gated hook pair tagged "watcher" so a demote can cancel only
@@ -434,11 +437,11 @@ export function wireIndexCoordinator(deps: IndexCoordinatorDeps): IndexCoordinat
   const isLeader = deps.isLeader ?? (() => true);
   const stopVaultWatch = registerVaultWatch(deps.vaults, deps.watch, {
     onUpsert: (vaultId, path, content) => {
-      publishChange(vaultId, path);
+      publishChange(vaultId, path, content);
       if (isLeader()) watcherReindexHook(vaultId, path, content);
     },
     onDelete: (vaultId, path) => {
-      publishChange(vaultId, path);
+      publishChange(vaultId, path, null);
       if (isLeader()) watcherDeindexHook(vaultId, path);
     },
     ...(deps.onVaultConfigChange
