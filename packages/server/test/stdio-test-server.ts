@@ -17,6 +17,8 @@ export interface StdioTestServerOptions {
   /** Registers a `destructive: true` tool of this name and wires the elicit codec production stdio
    *  uses (runtime/server-runtime.ts), so a call to it can answer `input_required`. */
   confirmTool?: string;
+  /** Registers a tool of this name that reports whether its context carries `sample`. */
+  featureTool?: string;
 }
 
 export function stdioTestBuilder(opts: StdioTestServerOptions) {
@@ -39,6 +41,15 @@ export function stdioTestBuilder(opts: StdioTestServerOptions) {
       destructive: true,
       confirmationTargets: "none",
       handler: () => ({ wrote: true }),
+    } as never);
+  }
+  if (opts.featureTool !== undefined) {
+    registry.register({
+      name: opts.featureTool,
+      description: "test-only: reports which client features its context carries",
+      inputSchema: z.object({}),
+      requiredScopes: [],
+      handler: (_input: unknown, ctx: CallerContext) => ({ sample: typeof ctx.sample }),
     } as never);
   }
   const elicitation =

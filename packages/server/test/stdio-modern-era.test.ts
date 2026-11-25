@@ -44,7 +44,7 @@ afterEach(() => {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-function harness(opts: { confirmTool?: string } = {}): Harness {
+function harness(opts: { confirmTool?: string; featureTool?: string } = {}): Harness {
   const root = makeTempDir("stdio-modern-era-");
   tmpRoots.push(root);
   const builds: string[] = [];
@@ -53,6 +53,7 @@ function harness(opts: { confirmTool?: string } = {}): Harness {
     result: { ok: true },
     vaultRoot: root,
     confirmTool: opts.confirmTool,
+    featureTool: opts.featureTool,
   });
   const counts = { handshake: 0, eof: 0 };
   const errors: string[] = [];
@@ -367,6 +368,32 @@ describe("stdio fatal wire close and per-request client capabilities", () => {
         const r = await callConfirm(h, 2, {});
         expect(r.result?.resultType).not.toBe("input_required");
         expect(JSON.stringify(r)).toContain("elicit_required");
+      } finally {
+        await h.handle.close();
+      }
+    },
+    stallTimeout(20_000),
+  );
+});
+
+describe("stdio tool contexts follow the request's declared client features", () => {
+  const callFeatures = (h: Harness, id: number, clientCapabilities: object) =>
+    h.request(id, "tools/call", {
+      name: "features",
+      arguments: {},
+      _meta: { ...MODERN_META, "io.modelcontextprotocol/clientCapabilities": clientCapabilities },
+    });
+
+  it(
+    "a modern client that declares sampling gets ctx.sample; one that does not gets none",
+    async () => {
+      const h = harness({ featureTool: "features" });
+      try {
+        await discover(h, 1);
+        const declared = await callFeatures(h, 2, { sampling: {} });
+        expect(declared.result?.structuredContent).toEqual({ sample: "function" });
+        const bare = await callFeatures(h, 3, {});
+        expect(bare.result?.structuredContent).toEqual({ sample: "undefined" });
       } finally {
         await h.handle.close();
       }
