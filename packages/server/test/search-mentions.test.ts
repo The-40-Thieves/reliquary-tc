@@ -1,4 +1,4 @@
-import { utimesSync, writeFileSync } from "node:fs";
+import { linkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { FolderAcl } from "../src/acl";
@@ -188,19 +188,31 @@ afterEach(() => {
   for (const d of tmp.splice(0)) rmTemp(d);
 });
 
-/** Two vaults, `main` and `work`, each holding Hello.md; `workAcl` governs `work` only. */
-function twoVaults(workAcl?: FolderAcl) {
+interface TwoVaultOptions {
+  /** Governs `work` only. */
+  workAcl?: FolderAcl;
+  boundVaultOnly?: boolean;
+  /** Runs once per vault root after Hello.md is written. */
+  setup?: (root: string, id: string) => void;
+}
+
+/** Two vaults, `main` and `work`, each holding Hello.md. The returned call answers the hits as
+ *  sorted `<vault>/<path>` strings. */
+function twoVaults(opts: TwoVaultOptions = {}) {
   const vaults = ["main", "work"].map((id) => {
     const path = makeTempDir("obtc-mentions-multi-");
     tmp.push(path);
     writeFileSync(join(path, "Hello.md"), "# Hello\n");
+    opts.setup?.(path, id);
     return { id, path };
   });
-  const vaultRegistry = new VaultRegistry(vaults);
+  const vaultRegistry = new VaultRegistry(vaults, undefined, undefined, {
+    boundVaultOnly: opts.boundVaultOnly,
+  });
   const tool = buildSearchMentionsTool({ vaultRegistry }, (id) =>
-    id === "work" ? workAcl : undefined,
+    id === "work" ? opts.workAcl : undefined,
   );
-  return async (ctx: Partial<CallerContext>): Promise<string[]> => {
+  return async (ctx: Partial<CallerContext>, vault?: string): Promise<string[]> => {
     const full = {
       caller: "t",
       authenticated: true,
@@ -210,24 +222,43 @@ function twoVaults(workAcl?: FolderAcl) {
       db: {} as never,
       ...ctx,
     } as CallerContext;
-    const out = (await tool.handler(SearchMentionsInput.parse({ query: "hel" }), full)) as {
-      items: Array<{ uri: string }>;
-    };
-    return out.items.map((i) => parseResourceUri(i.uri).vaultId).sort();
+    const input = SearchMentionsInput.parse({ query: "hello", ...(vault ? { vault } : {}) });
+    const out = (await tool.handler(input, full)) as { items: Array<{ uri: string }> };
+    return out.items
+      .map((i) => parseResourceUri(i.uri))
+      .map((u) => `${u.vaultId}/${u.relPath}`)
+      .sort();
   };
 }
 
 describe("search_mentions with no vault argument", () => {
   it("searches every vault for a trusted, unbound caller", async () => {
-    expect(await twoVaults()({})).toEqual(["main", "work"]);
+    expect(await twoVaults()({})).toEqual(["main/Hello.md", "work/Hello.md"]);
   });
 
   it("searches only the caller's own vault for a vault-bound caller", async () => {
-    expect(await twoVaults()({ vaultBound: true })).toEqual(["main"]);
+    expect(await twoVaults()({ vaultBound: true })).toEqual(["main/Hello.md"]);
   });
 
   it("judges each vault by its own ACL, not the caller's default", async () => {
-    const closed = new FolderAcl({ ...OPEN, readPaths: [] });
-    expect(await twoVaults(closed)({})).toEqual(["main"]);
+    const workAcl = new FolderAcl({ ...OPEN, readPaths: [] });
+    expect(await twoVaults({ workAcl })({})).toEqual(["main/Hello.md"]);
+  });
+});
+
+describe("search_mentions offers only links resources/read opens", () => {
+  it("leaves out a hard-linked note, which every read refuses", async () => {
+    const setup = (root: string, id: string) => {
+      if (id !== "main") return;
+      writeFileSync(join(root, "Hello-a.md"), "a\n");
+      linkSync(join(root, "Hello-a.md"), join(root, "Hello-b.md"));
+    };
+    expect(await twoVaults({ setup })({})).toEqual(["main/Hello.md", "work/Hello.md"]);
+  });
+
+  it("under resources.boundVaultOnly, a named foreign vault returns nothing", async () => {
+    const call = twoVaults({ boundVaultOnly: true });
+    expect(await call({}, "work")).toEqual([]);
+    expect(await call({}, "main")).toEqual(["main/Hello.md"]);
   });
 });

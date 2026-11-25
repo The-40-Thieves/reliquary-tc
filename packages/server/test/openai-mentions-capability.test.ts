@@ -120,6 +120,16 @@ describe("openai/mentions, domain surface", () => {
 });
 
 describe("openai/mentions capability, flag on", () => {
+  it("is not advertised to a caller who cannot see search_mentions", async () => {
+    const visibility = { grantedScopes: new Set(["write:notes"]) };
+    const { client, server } = await connect({ openaiMentions: true, visibility });
+    const ext = (client.getServerCapabilities() as { extensions?: Record<string, unknown> })
+      .extensions;
+    expect(ext?.["openai/mentions"]).toBeUndefined();
+    await client.close();
+    await server.close();
+  });
+
   it("advertises searchTool: search_mentions under extensions", async () => {
     const { client, server } = await connect({ openaiMentions: true });
     const ext = (client.getServerCapabilities() as { extensions?: Record<string, unknown> })
@@ -155,7 +165,7 @@ describe("openai/mentions, a host call", () => {
   // The host sends only {query}; the vault comes from the caller's default, never the arguments.
   it("answers a {query}-only call with no vault argument", async () => {
     const { client, server } = await connect({ openaiMentions: true });
-    const res = await client.callTool({ name: "search_mentions", arguments: { query: "hel" } });
+    const res = await client.callTool({ name: "search_mentions", arguments: { query: "hello" } });
     expect(res.isError).toBeFalsy();
     const items = (res.structuredContent as { items: Array<{ type: string; name: string }> }).items;
     expect(items.map((i) => [i.type, i.name])).toEqual([["resource_link", "Hello"]]);
@@ -181,7 +191,7 @@ describe("openai/mentions, a host call", () => {
 describe("openai/mentions, a host call with several vaults", () => {
   it("answers a {query}-only call when the caller can see two vaults", async () => {
     const { client, server } = await connect({ openaiMentions: true }, ["main", "work"]);
-    const res = await client.callTool({ name: "search_mentions", arguments: { query: "hel" } });
+    const res = await client.callTool({ name: "search_mentions", arguments: { query: "hello" } });
     expect(res.isError).toBeFalsy();
     const items = (res.structuredContent as { items: Array<{ uri: string }> }).items;
     expect(items.map((i) => i.uri).sort()).toEqual([
