@@ -26,6 +26,7 @@ type Msg = Record<string, any>;
 
 interface Harness {
   stdin: PassThrough;
+  stdout: PassThrough;
   msgs: Msg[];
   builds: string[];
   counts: { handshake: number; eof: number };
@@ -43,17 +44,26 @@ afterEach(() => {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-function harness(): Harness {
+function harness(opts: { confirmTool?: string } = {}): Harness {
   const root = makeTempDir("stdio-modern-era-");
   tmpRoots.push(root);
   const builds: string[] = [];
-  const build = stdioTestBuilder({ tool: "probe", result: { ok: true }, vaultRoot: root });
+  const build = stdioTestBuilder({
+    tool: "probe",
+    result: { ok: true },
+    vaultRoot: root,
+    confirmTool: opts.confirmTool,
+  });
   const counts = { handshake: 0, eof: 0 };
   const errors: string[] = [];
   const stdin = new PassThrough();
   const stdout = new PassThrough();
   const msgs: Msg[] = [];
-  createInterface({ input: stdout }).on("line", (line) => msgs.push(JSON.parse(line)));
+  // readline re-emits stdout's errors on the Interface, which would throw with no listener of its
+  // own; the transport handles the same error on stdout itself.
+  createInterface({ input: stdout })
+    .on("line", (line) => msgs.push(JSON.parse(line)))
+    .on("error", () => {});
   const handle = serveStdioEras(
     (era) => {
       builds.push(era);
@@ -91,7 +101,7 @@ function harness(): Harness {
       `${method} reply (id ${id})`,
     );
   };
-  return { stdin, msgs, builds, counts, errors, handle, send, request, waitMsg };
+  return { stdin, stdout, msgs, builds, counts, errors, handle, send, request, waitMsg };
 }
 
 async function legacyInit(h: Harness, id: number): Promise<Msg> {
@@ -109,6 +119,14 @@ const discover = (h: Harness, id: number) =>
 
 const modernList = (h: Harness, id: number, method: string) =>
   h.request(id, method, { _meta: MODERN_META });
+
+/** A modern tools/call on the confirmation-gated tool, carrying the client's per-request capabilities. */
+const callConfirm = (h: Harness, id: number, clientCapabilities: object) =>
+  h.request(id, "tools/call", {
+    name: "confirm_write",
+    arguments: {},
+    _meta: { ...MODERN_META, "io.modelcontextprotocol/clientCapabilities": clientCapabilities },
+  });
 
 /** Opens a session with `setup`, ends stdin, and expects onEof to have fired exactly once. */
 async function expectEofOnce(setup: (h: Harness) => Promise<unknown>): Promise<void> {
@@ -272,6 +290,79 @@ describe("stdio serves both protocol revisions, chosen by the opening message", 
         );
         expect(ack.error).toBeUndefined();
         expect(ack.params?.notifications?.resourceSubscriptions).toBeUndefined();
+      } finally {
+        await h.handle.close();
+      }
+    },
+    stallTimeout(20_000),
+  );
+
+  it(
+    "an input line over the transport's buffer limit calls onEof exactly once",
+    async () => {
+      const h = harness();
+      try {
+        await legacyInit(h, 1);
+        // One chunk just over the SDK's 10 MiB read buffer, with no newline. The transport closes
+        // itself on that overflow, and stdin never emits end: this is the only disconnect signal.
+        h.stdin.write(Buffer.alloc(10 * 1024 * 1024 + 1, 0x61));
+        await sleep(300);
+        expect(h.counts.eof).toBe(1);
+      } finally {
+        await h.handle.close();
+      }
+    },
+    stallTimeout(20_000),
+  );
+
+  it(
+    "a stdout write error calls onEof exactly once",
+    async () => {
+      const h = harness();
+      try {
+        await discover(h, 1);
+        // A broken pipe on stdout: the transport closes itself, and stdin never emits end.
+        h.stdout.emit("error", new Error("EPIPE"));
+        await sleep(300);
+        expect(h.counts.eof).toBe(1);
+      } finally {
+        await h.handle.close();
+      }
+    },
+    stallTimeout(20_000),
+  );
+
+  it(
+    "a modern client that declares form elicitation gets input_required for a confirmation-gated call",
+    async () => {
+      const h = harness({ confirmTool: "confirm_write" });
+      try {
+        await discover(h, 1);
+        const r = await callConfirm(h, 2, { elicitation: { form: {} } });
+        expect(r.error).toBeUndefined();
+        expect(r.result.resultType).toBe("input_required");
+        const entries = Object.values(r.result.inputRequests ?? {}) as Msg[];
+        expect(entries).toHaveLength(1);
+        expect(entries[0]?.method).toBe("elicitation/create");
+        expect(Object.keys(entries[0]?.params?.requestedSchema?.properties ?? {})).toEqual([
+          "approve",
+        ]);
+      } finally {
+        await h.handle.close();
+      }
+    },
+    stallTimeout(20_000),
+  );
+
+  it(
+    "control: the same call declaring no elicitation capability does not get input_required",
+    async () => {
+      const h = harness({ confirmTool: "confirm_write" });
+      try {
+        await discover(h, 1);
+        const r = await callConfirm(h, 2, {});
+        expect(r.result?.resultType).not.toBe("input_required");
+        expect(JSON.stringify(r)).toContain("elicit_required");
       } finally {
         await h.handle.close();
       }

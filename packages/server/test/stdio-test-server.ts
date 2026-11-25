@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import { provisionCacheDb } from "../src/db/provision";
+import { createStdioElicitCodec } from "../src/elicit";
 import { type CallerContext, ToolRegistry } from "../src/mcp/registry";
 import { createMcpServer } from "../src/mcp/server";
 import { VaultRegistry } from "../src/vault/registry";
@@ -13,6 +14,9 @@ export interface StdioTestServerOptions {
   tool: string;
   result: Record<string, unknown>;
   vaultRoot?: string;
+  /** Registers a `destructive: true` tool of this name and wires the elicit codec production stdio
+   *  uses (runtime/server-runtime.ts), so a call to it can answer `input_required`. */
+  confirmTool?: string;
 }
 
 export function stdioTestBuilder(opts: StdioTestServerOptions) {
@@ -26,6 +30,21 @@ export function stdioTestBuilder(opts: StdioTestServerOptions) {
     requiredScopes: [],
     handler: () => opts.result,
   } as never);
+  if (opts.confirmTool !== undefined) {
+    registry.register({
+      name: opts.confirmTool,
+      description: "test-only: a destructive tool that trips the confirmation gate",
+      inputSchema: z.object({}),
+      requiredScopes: [],
+      destructive: true,
+      confirmationTargets: "none",
+      handler: () => ({ wrote: true }),
+    } as never);
+  }
+  const elicitation =
+    opts.confirmTool === undefined
+      ? {}
+      : { elicitCodec: createStdioElicitCodec(), legacyElicitationShim: true };
   const vaultRegistry =
     opts.vaultRoot === undefined
       ? undefined
@@ -46,5 +65,6 @@ export function stdioTestBuilder(opts: StdioTestServerOptions) {
       ...(vaultRegistry ? { vaultRegistry } : {}),
       era,
       resourceSubscribe: era !== "modern",
+      ...elicitation,
     });
 }
