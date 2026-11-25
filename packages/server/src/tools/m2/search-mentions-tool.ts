@@ -116,12 +116,14 @@ function searchedVaults(
   named: string | undefined,
 ): SearchedVault[] {
   const reg = deps.vaultRegistry;
+  const foreign = servesForeignVaults(ctx, reg);
+  const own = reg.resolve(ctx.vaultId);
   const vaults =
     named !== undefined
-      ? [reg.resolve(named)]
-      : servesForeignVaults(ctx, reg)
+      ? [reg.resolve(named)].filter((v) => foreign || v.id === own.id)
+      : foreign
         ? reg.list()
-        : [reg.resolve(ctx.vaultId)];
+        : [own];
   return vaults.map((v) => ({ id: v.id, root: v.root, acl: aclFor(v.id) ?? ctx.acl }));
 }
 

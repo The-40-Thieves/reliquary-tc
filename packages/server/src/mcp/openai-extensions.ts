@@ -16,6 +16,8 @@ export interface OpenAiExtensionOptions {
   jobQueue?: unknown;
   servesTaskMethods?: boolean;
   outputSchema?: "full" | "omit";
+  /** The caller tools/list answers; the capability is offered only when it can see the tool. */
+  visibility?: VisibilityCaller;
 }
 
 /** The `capabilities` fields createMcpServer spreads in: `{ extensions }` when at least one
@@ -31,11 +33,12 @@ export function extensionsCapability(
   return Object.keys(extensions).length > 0 ? { extensions } : {};
 }
 
-/** The flag is on AND the tool is registered (the capability names it, so it must exist). */
+/** The flag is on AND this caller's tools/list shows the tool (the capability names it, so the
+ *  caller must be able to call it: scopes, static and persona visibility all apply). */
 function mentionsEnabled(opts: OpenAiExtensionOptions): boolean {
   return (
     opts.openaiMentions === true &&
-    opts.registry.list().some((d) => d.name === SEARCH_MENTIONS_TOOL)
+    opts.registry.listVisible(opts.visibility).some((d) => d.name === SEARCH_MENTIONS_TOOL)
   );
 }
 
