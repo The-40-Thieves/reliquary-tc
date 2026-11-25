@@ -119,3 +119,57 @@ describe("wireIndexCoordinator publishes note changes to the resource-change bus
     }
   });
 });
+
+describe("one change to a note is published once, whichever hooks see it", () => {
+  const A = { vaultId: "test", relPath: "notes/a.md" };
+
+  it("a tool write the watcher then sees publishes once; a later different content publishes again", async () => {
+    const v = makeM2Vault({ files: {} });
+    const { wiring, published } = wire(v);
+    try {
+      wiring.reindexHook(v.id, "notes/a.md", "# A\n\nbody\n");
+      captured.onUpsert?.(v.id, "notes/a.md", "# A\n\nbody\n");
+      expect(published).toEqual([A]);
+      captured.onUpsert?.(v.id, "notes/a.md", "# A\n\nedited outside\n");
+      expect(published).toEqual([A, A]);
+      // Back to the first content is a change again, not a repeat of the first publish.
+      captured.onUpsert?.(v.id, "notes/a.md", "# A\n\nbody\n");
+      expect(published).toEqual([A, A, A]);
+      await wiring.indexCoordinator.idle();
+    } finally {
+      wiring.stopVaultWatch();
+      v.cleanup();
+    }
+  });
+
+  it("a tool delete the watcher then sees publishes once; a re-created note publishes again", async () => {
+    const v = makeM2Vault({ files: {} });
+    const { wiring, published } = wire(v);
+    try {
+      wiring.reindexHook(v.id, "notes/a.md", "x");
+      wiring.deindexHook(v.id, "notes/a.md");
+      captured.onDelete?.(v.id, "notes/a.md");
+      expect(published).toEqual([A, A]);
+      captured.onUpsert?.(v.id, "notes/a.md", "x");
+      expect(published).toEqual([A, A, A]);
+      await wiring.indexCoordinator.idle();
+    } finally {
+      wiring.stopVaultWatch();
+      v.cleanup();
+    }
+  });
+
+  it("the same content on two different notes publishes for each", async () => {
+    const v = makeM2Vault({ files: {} });
+    const { wiring, published } = wire(v);
+    try {
+      wiring.reindexHook(v.id, "notes/a.md", "same");
+      wiring.reindexHook(v.id, "notes/b.md", "same");
+      expect(published.map((e) => e.relPath)).toEqual(["notes/a.md", "notes/b.md"]);
+      await wiring.indexCoordinator.idle();
+    } finally {
+      wiring.stopVaultWatch();
+      v.cleanup();
+    }
+  });
+});
