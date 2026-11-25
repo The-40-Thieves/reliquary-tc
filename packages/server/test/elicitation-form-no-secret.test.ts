@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 import { buildConfirmElicitationParams } from "../src/mcp/elicit-form";
 
 const SRC_DIR = fileURLToPath(new URL("../src", import.meta.url));
+// `mode: "url"` in any quoting: bare or quoted key, and a double, single or backtick quoted value.
+const URL_MODE = /["']?\bmode["']?\s*:\s*["'`]url["'`]/;
 const SECRET_WORDS = /pass(word|phrase)|secret|token|credential|api.?key/i;
 
 interface SourceFile {
@@ -38,7 +40,8 @@ function assertConfirmationOnly(params: ReturnType<typeof buildConfirmElicitatio
   expect(Object.keys(properties)).toEqual(["approve"]);
   for (const [key, property] of Object.entries(properties)) {
     expect(key).not.toMatch(SECRET_WORDS);
-    expect(property.title).not.toMatch(SECRET_WORDS);
+    // Every string the field carries (title, and any description added later), not the title alone.
+    expect(JSON.stringify(property)).not.toMatch(SECRET_WORDS);
     expect(property.type).toBe("boolean");
   }
 }
@@ -63,9 +66,7 @@ describe("elicitation forms", () => {
     const sources = loadSourceFiles();
     expect(sources.length).toBeGreaterThan(100);
     // When URL-mode elicitation is added, this case is where its guard goes.
-    const urlSenders = sources
-      .filter((file) => /mode:\s*"url"/.test(file.text))
-      .map((file) => file.rel);
+    const urlSenders = sources.filter((file) => URL_MODE.test(file.text)).map((file) => file.rel);
     expect(urlSenders).toEqual([]);
   });
 
