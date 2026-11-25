@@ -36,7 +36,7 @@ export function requestClientCapabilities(server: Server, envelope: unknown): un
     const declared = (envelope as Record<string, unknown>)[CLIENT_CAPABILITIES_META_KEY];
     if (declared !== null && typeof declared === "object") return declared;
   }
-  return (server as unknown as { getClientCapabilities: () => unknown }).getClientCapabilities();
+  return handshakeCapabilities(server);
 }
 
 /** The RFC 5424 levels the spec defines, ordered least to most severe. */
@@ -119,10 +119,8 @@ export async function emitLog(
  */
 export async function clientRoots(
   server: Server,
+  caps: unknown = handshakeCapabilities(server),
 ): Promise<Array<{ uri: string; name?: string }> | undefined> {
-  const caps = (
-    server as unknown as { getClientCapabilities: () => unknown }
-  ).getClientCapabilities();
   if (!declares(caps, "roots")) return undefined;
   try {
     const res = await (
@@ -137,11 +135,27 @@ export async function clientRoots(
 }
 
 /** Did the client advertise sampling — i.e. can this server ask it to run a completion? */
-export function clientSupportsSampling(server: Server): boolean {
-  return declares(
-    (server as unknown as { getClientCapabilities: () => unknown }).getClientCapabilities(),
-    "sampling",
-  );
+export function clientSupportsSampling(
+  server: Server,
+  caps: unknown = handshakeCapabilities(server),
+): boolean {
+  return declares(caps, "sampling");
+}
+
+function handshakeCapabilities(server: Server): unknown {
+  return (server as unknown as { getClientCapabilities: () => unknown }).getClientCapabilities();
+}
+
+type SampleParams = { messages: unknown[]; maxTokens: number; systemPrompt?: string };
+
+/** The client features a tool context carries, judged on `caps` (the request's declared ones). */
+export function clientFeatureContext(server: Server, caps: unknown) {
+  return {
+    roots: () => clientRoots(server, caps),
+    ...(clientSupportsSampling(server, caps)
+      ? { sample: (p: SampleParams) => sampleViaClient(server, p, caps) }
+      : {}),
+  };
 }
 
 /**
@@ -155,9 +169,10 @@ export function clientSupportsSampling(server: Server): boolean {
  */
 export async function sampleViaClient(
   server: Server,
-  params: { messages: unknown[]; maxTokens: number; systemPrompt?: string },
+  params: SampleParams,
+  caps: unknown = handshakeCapabilities(server),
 ): Promise<unknown | undefined> {
-  if (!clientSupportsSampling(server)) return undefined;
+  if (!clientSupportsSampling(server, caps)) return undefined;
   try {
     return await (
       server as unknown as { createMessage: (p: unknown) => Promise<unknown> }

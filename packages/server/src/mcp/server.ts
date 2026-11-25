@@ -19,12 +19,10 @@ import type { ResponseFormat } from "../util/response-format";
 import type { VaultRegistry } from "../vault/registry";
 import { capabilityHiddenCheck } from "./capability-hidden";
 import {
-  clientRoots,
-  clientSupportsSampling,
+  clientFeatureContext,
   emitLog,
   type RequestLog,
   requestClientCapabilities,
-  sampleViaClient,
 } from "./client-features";
 import {
   type ConfirmRoundOutcome,
@@ -597,13 +595,7 @@ export function createMcpServer(opts: McpServerOptions): Server {
     // SEP-2577: bind the deprecated-but-live client features onto the context, so every tool can
     // reach them. Gated on the client having advertised each one — calling either against a client
     // that did not is a protocol error, not a soft failure.
-    ctx = {
-      ...ctx,
-      roots: () => clientRoots(server),
-      ...(clientSupportsSampling(server)
-        ? { sample: (p: Parameters<typeof sampleViaClient>[1]) => sampleViaClient(server, p) }
-        : {}),
-    };
+    ctx = { ...ctx, ...clientFeatureContext(server, declared) };
     // THE-583 + THE-1106 (CRITICAL fix — see resolveElicitConfirmation's doc comment, elicit-form.ts).
     const confirmation = resolveElicitConfirmation(extra.mcpReq);
     const { roundOutcome, approvedRound } = confirmation;
