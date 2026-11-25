@@ -4,7 +4,7 @@
 // JSON text, with a `description` sentence), so the guard is at the one place every result passes
 // (ensureTextContent), plus a source scan so a new emitter cannot arrive without going through it.
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ensureTextContent } from "../src/mcp/tool-result";
 
@@ -91,6 +91,12 @@ describe("no tool emits a non-text block that bypasses the guard", () => {
     const hits = files.filter((f) => EMITTERS.test(readFileSync(f, "utf8")));
     // The guard itself only READS these types (`b.type === "image"`), it never builds one with a
     // `type: "..."` literal; a hit means a new emitter, which must come with its own alt-text test.
-    expect(hits.map((f) => f.slice(root.length))).toEqual([]);
+    // search_mentions builds `resource_link` items in its structuredContent only; the JSON text block
+    // beside them is pinned in openai-mentions-capability.test.ts.
+    const recorded = ["tools/m2/search-mentions-tool.ts"];
+    const unrecorded = hits
+      .map((f) => f.slice(root.length).split(sep).join("/"))
+      .filter((f) => !recorded.some((r) => f.endsWith(r)));
+    expect(unrecorded).toEqual([]);
   });
 });

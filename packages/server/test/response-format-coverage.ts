@@ -8,6 +8,8 @@
 // The exempt reasons are mirrored in the "Response format" section of the user docs.
 
 export const EXEMPT_FROM_RESPONSE_FORMAT: Readonly<Record<string, string>> = {
+  search_mentions:
+    "resource links are the payload: each carries the uri a client reads; the rest is the picker's label",
   list_tags: "one {tag, count} row per tag: already minimal",
   list_properties: "one {key, type, count} row per property: already minimal",
   list_vaults: "one minimal row per vault: nothing to drop",
