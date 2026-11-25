@@ -236,7 +236,9 @@ describe("stdio serves both protocol revisions, chosen by the opening message", 
     },
     stallTimeout(20_000),
   );
+});
 
+describe("stdio disconnect is reported once, and only for a real disconnect", () => {
   it(
     "stdin end on a legacy session calls onEof exactly once",
     async () => {
@@ -296,7 +298,9 @@ describe("stdio serves both protocol revisions, chosen by the opening message", 
     },
     stallTimeout(20_000),
   );
+});
 
+describe("stdio fatal wire close and per-request client capabilities", () => {
   it(
     "an input line over the transport's buffer limit calls onEof exactly once",
     async () => {
