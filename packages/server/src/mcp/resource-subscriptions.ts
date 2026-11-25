@@ -11,6 +11,7 @@
 // stream is open, and the stream must follow it.
 
 import type { ResourceChangeBus } from "../vault/note-changes";
+import { type ListenSource, serveListenSources } from "./listen-stream";
 
 /** The most URIs one subscription may name. Above it the request is refused, not truncated. */
 export const MAX_RESOURCE_SUBSCRIPTION_URIS = 256;
@@ -24,13 +25,14 @@ export function requestedResourceSubscriptions(body: unknown): string[] | undefi
   return list.every((uri) => typeof uri === "string") ? (list as string[]) : undefined;
 }
 
-/** Did this `subscriptions/listen` ask for resource update notifications? */
+/** Did this `subscriptions/listen` ask for resource update notifications? Any other method that
+ *  carries the same key is an ordinary request, not a subscription. */
 export function subscribesToResources(body: unknown): boolean {
+  if ((body as { method?: unknown } | null)?.method !== "subscriptions/listen") return false;
   return requestedResourceSubscriptions(body) !== undefined;
 }
 
 const SUBSCRIPTION_ID = "io.modelcontextprotocol/subscriptionId";
-const encoder = new TextEncoder();
 
 type Target = { vaultId: string; relPath: string } | null;
 
@@ -48,64 +50,54 @@ function refuseTooMany(count: number, id: string | number | null): Response {
   );
 }
 
-/** Write one SSE frame. A client that hung up between the check and the write is not an error. */
-function sendFrame(
-  controller: ReadableStreamDefaultController<Uint8Array>,
-  frame: Record<string, unknown>,
-): void {
-  try {
-    controller.enqueue(encoder.encode(`event: message\ndata: ${JSON.stringify(frame)}\n\n`));
-  } catch {
-    /* the client hung up between the check and the write */
-  }
-}
-
-interface OpenStream {
-  controller: ReadableStreamDefaultController<Uint8Array>;
-  bus: ResourceChangeBus;
-  canRead: (uri: string) => Target;
-  uris: string[];
-  distinct: string[];
-  id: string | number | null;
-}
-
-/** Ack every URI, then send an update per event whose note `canRead` names. Returns the unsubscribe. */
-function openStream(s: OpenStream): () => void {
-  sendFrame(s.controller, {
-    jsonrpc: "2.0",
-    method: "notifications/subscriptions/acknowledged",
-    params: {
-      notifications: { resourceSubscriptions: s.uris },
-      _meta: { [SUBSCRIPTION_ID]: s.id },
-    },
-  });
-  return s.bus.onChange((event) => {
-    for (const uri of s.distinct) {
-      let target: Target = null;
-      try {
-        target = s.canRead(uri);
-      } catch {
-        target = null;
-      }
-      if (!target) continue;
-      if (target.vaultId !== event.vaultId || target.relPath !== event.relPath) continue;
-      sendFrame(s.controller, {
-        jsonrpc: "2.0",
-        method: "notifications/resources/updated",
-        params: { uri, _meta: { [SUBSCRIPTION_ID]: s.id } },
-      });
-    }
-  });
-}
-
 /**
- * Serve the resource-update stream. Refuses more than MAX_RESOURCE_SUBSCRIPTION_URIS URIs with a
- * JSON-RPC -32602 error (HTTP 400). Otherwise acks every URI, then sends one
- * `notifications/resources/updated` for each (uri, event) pair where `canRead(uri)` names the
- * event's vault and path, until the request is aborted.
+ * This subscription's share of a listen stream: its ack lists every requested URI, and each event
+ * whose note `canRead` names for a requested URI becomes one `notifications/resources/updated`.
+ * Returns the over-limit refusal instead when the request names more than
+ * MAX_RESOURCE_SUBSCRIPTION_URIS URIs.
  *
  * `canRead` is called on every event, with the URI the client sent, and returns the note's
  * normalized target or null.
+ */
+export function resourceListenSource(
+  body: unknown,
+  bus: ResourceChangeBus,
+  canRead: (uri: string) => Target,
+): ListenSource | Response {
+  const id = (body as { id?: string | number | null } | null)?.id ?? null;
+  const uris = requestedResourceSubscriptions(body) ?? [];
+  if (uris.length > MAX_RESOURCE_SUBSCRIPTION_URIS) return refuseTooMany(uris.length, id);
+  // A URI listed twice gets one update per event, not two.
+  const distinct = [...new Set(uris)];
+  return {
+    ack: { resourceSubscriptions: uris },
+    attach(send, subscriptionId) {
+      return bus.onChange((event) => {
+        for (const uri of distinct) {
+          let target: Target = null;
+          try {
+            target = canRead(uri);
+          } catch {
+            target = null;
+          }
+          if (!target) continue;
+          if (target.vaultId !== event.vaultId || target.relPath !== event.relPath) continue;
+          send({
+            jsonrpc: "2.0",
+            method: "notifications/resources/updated",
+            params: { uri, _meta: { [SUBSCRIPTION_ID]: subscriptionId } },
+          });
+        }
+      });
+    },
+  };
+}
+
+/**
+ * Serve the resource-update stream on its own. Refuses more than MAX_RESOURCE_SUBSCRIPTION_URIS URIs
+ * with a JSON-RPC -32602 error (HTTP 400). Otherwise acks every URI, then sends one
+ * `notifications/resources/updated` for each (uri, event) pair where `canRead(uri)` names the
+ * event's vault and path, until the request is aborted.
  */
 export function serveResourceSubscription(
   body: unknown,
@@ -113,31 +105,8 @@ export function serveResourceSubscription(
   canRead: (uri: string) => Target,
   signal: AbortSignal,
 ): Response {
+  const source = resourceListenSource(body, bus, canRead);
+  if (source instanceof Response) return source;
   const id = (body as { id?: string | number | null } | null)?.id ?? null;
-  const uris = requestedResourceSubscriptions(body) ?? [];
-  if (uris.length > MAX_RESOURCE_SUBSCRIPTION_URIS) return refuseTooMany(uris.length, id);
-  // A URI listed twice gets one update per event, not two.
-  const distinct = [...new Set(uris)];
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const unsubscribe = openStream({ controller, bus, canRead, uris, distinct, id });
-      const close = () => {
-        unsubscribe();
-        try {
-          controller.close();
-        } catch {
-          /* already closed */
-        }
-      };
-      if (signal.aborted) close();
-      else signal.addEventListener("abort", close, { once: true });
-    },
-  });
-  return new Response(stream, {
-    headers: {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-    },
-  });
+  return serveListenSources(id, [source], signal);
 }

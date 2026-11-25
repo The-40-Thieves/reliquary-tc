@@ -7,12 +7,15 @@
 // (i.e. experiential.proactive.enabled) AND the client actually asked for advisory notifications.
 //
 // Resource updates (`notifications/resources/updated`): see mcp/resource-subscriptions.ts.
+//
+// A request may ask for both. They share one stream (mcp/listen-stream.ts), so one ack covers both.
 
 import type { FolderAcl } from "../acl";
 import type { AdvisoryBus } from "../mcp/advisories";
-import { serveAdvisorySubscription, subscribesToAdvisories } from "../mcp/advisories";
+import { advisoryListenSource, subscribesToAdvisories } from "../mcp/advisories";
+import { type ListenSource, serveListenSources } from "../mcp/listen-stream";
 import type { CallerContext } from "../mcp/registry";
-import { serveResourceSubscription, subscribesToResources } from "../mcp/resource-subscriptions";
+import { resourceListenSource, subscribesToResources } from "../mcp/resource-subscriptions";
 import { canReadResourceUri } from "../mcp/resources";
 import type { VaultRegistry } from "../vault/registry";
 
@@ -29,19 +32,25 @@ export function serveListenExtension(input: {
   makeContext: () => CallerContext;
 }): Response | undefined {
   const { body, modern, signal, owner, advisoryBus, vaultRegistry, aclFor, makeContext } = input;
+  // Any other method carrying one of these keys is an ordinary request and goes to the SDK.
+  if ((body as { method?: unknown } | null)?.method !== "subscriptions/listen") return undefined;
+  const sources: ListenSource[] = [];
   if (advisoryBus && modern && subscribesToAdvisories(body)) {
-    return serveAdvisorySubscription(body, advisoryBus, owner, signal);
+    const source = advisoryListenSource(body, advisoryBus, owner);
+    if (source instanceof Response) return source;
+    sources.push(source);
   }
   if (vaultRegistry && modern && subscribesToResources(body)) {
     // Built once, at subscribe time: contextFromAuthInfo can open a workspace session, so it must
     // not run per event. The ACL is still resolved per event, so an ACL change reaches the stream.
     const ctx = makeContext();
-    return serveResourceSubscription(
-      body,
-      vaultRegistry.changes,
-      (uri) => canReadResourceUri(vaultRegistry, ctx, uri, aclFor),
-      signal,
+    const source = resourceListenSource(body, vaultRegistry.changes, (uri) =>
+      canReadResourceUri(vaultRegistry, ctx, uri, aclFor),
     );
+    if (source instanceof Response) return source;
+    sources.push(source);
   }
-  return undefined;
+  if (sources.length === 0) return undefined;
+  const id = (body as { id?: string | number | null } | null)?.id ?? null;
+  return serveListenSources(id, sources, signal);
 }
