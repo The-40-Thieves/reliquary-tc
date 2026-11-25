@@ -8,7 +8,7 @@
 // first, so a late delivery cannot be mistaken for silence.
 
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { linkSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ServerConfigSchema } from "@the-40-thieves/reliquary-tc-shared";
@@ -16,10 +16,16 @@ import { SignJWT } from "jose";
 import { afterEach, describe, expect, it } from "vitest";
 import { FolderAcl } from "../src/acl";
 import {
+  ADVISORY_SUBSCRIPTION_KEY,
+  type AdvisoryBus,
+  createAdvisoryBus,
+} from "../src/mcp/advisories";
+import {
   buildResourceUri,
   CATALOG_RESOURCE_URI,
   canReadResourceUri,
   RESOURCE_SCHEME,
+  readResourceFor,
 } from "../src/mcp/resources";
 import { createHttpApp, type HttpApp } from "../src/transports/http";
 import { makeTestVault, type TestVault } from "./m1-helpers";
@@ -54,7 +60,7 @@ function vault(): TestVault {
   return v;
 }
 
-function boot(v: TestVault): HttpApp {
+function boot(v: TestVault, advisoryBus?: AdvisoryBus): HttpApp {
   const auth = ServerConfigSchema.parse({
     vaults: [{ id: "test", path: v.root }],
     auth: { mode: "jwt", jwtSecret: signingKey, audience: "http://test", tokenTtlSeconds: 3600 },
@@ -68,6 +74,7 @@ function boot(v: TestVault): HttpApp {
     registry: v.registry,
     version: "0.0.0-test",
     name: "reliquary-tc",
+    ...(advisoryBus ? { advisoryBus } : {}),
   });
   apps.push(app);
   return app;
@@ -122,8 +129,10 @@ function listenHeaders(jwt: string, modern: boolean): Record<string, string> {
   };
 }
 
-function listenBody(uris: string[], modern: boolean, id: number): string {
-  const params: Record<string, unknown> = { notifications: { resourceSubscriptions: uris } };
+function listenBody(uris: string[], modern: boolean, id: number, advisory = false): string {
+  const notifications: Record<string, unknown> = { resourceSubscriptions: uris };
+  if (advisory) notifications[ADVISORY_SUBSCRIPTION_KEY] = true;
+  const params: Record<string, unknown> = { notifications };
   if (modern) {
     params._meta = {
       "io.modelcontextprotocol/protocolVersion": MODERN,
@@ -177,7 +186,7 @@ async function openListen(
   app: HttpApp,
   jwt: string,
   uris: string[],
-  opts: { modern?: boolean; id?: number } = {},
+  opts: { modern?: boolean; id?: number; advisory?: boolean } = {},
 ): Promise<Listen> {
   const modern = opts.modern !== false;
   const ac = new AbortController();
@@ -185,7 +194,7 @@ async function openListen(
     method: "POST",
     signal: ac.signal,
     headers: listenHeaders(jwt, modern),
-    body: listenBody(uris, modern, opts.id ?? 1),
+    body: listenBody(uris, modern, opts.id ?? 1, opts.advisory === true),
   });
   let ended = false;
   const out: Listen = {
@@ -317,6 +326,29 @@ describe("resources/updated over HTTP (modern era)", () => {
     stallTimeout(30_000),
   );
 
+  it("(f) a modern tools/list that carries resourceSubscriptions is answered as JSON, not as an SSE stream", async () => {
+    const { app } = startVault();
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 11,
+      method: "tools/list",
+      params: {
+        notifications: { resourceSubscriptions: [PUB] },
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": MODERN,
+          "io.modelcontextprotocol/clientInfo": { name: "rs-sub-test", version: "1" },
+          "io.modelcontextprotocol/clientCapabilities": {},
+        },
+      },
+    });
+    const headers = { ...listenHeaders(await tokenFor(["*"]), true), "mcp-method": "tools/list" };
+    const res = await app.app.request(LISTEN_URL, { method: "POST", headers, body });
+    expect(res.headers.get("content-type") ?? "").not.toContain("text/event-stream");
+    expect(await res.json()).toMatchObject({ jsonrpc: "2.0", id: 11 });
+  });
+});
+
+describe("which resource URIs a caller may subscribe to", () => {
   it("(e) canReadResourceUri: the normalized target for a readable note, including one not yet on disk", () => {
     const v = vault();
     const aclFor = (id: string) => v.registry.aclFor(id);
@@ -330,6 +362,30 @@ describe("resources/updated over HTTP (modern era)", () => {
       aclFor,
     );
     expect(readable).toEqual({ vaultId: "test", relPath: "pub/new.md" });
+  });
+
+  it("(e) canReadResourceUri: a hard-linked note is refused exactly as resources/read refuses it; an ordinary note and a deleted note still resolve", () => {
+    const v = vault();
+    const aclFor = (id: string) => v.registry.aclFor(id);
+    const ctx = v.ctx();
+    writeFileSync(join(v.root, "pub", "ordinary.md"), "ORDINARY\n");
+    linkSync(join(v.root, "pub", "a.md"), join(v.root, "pub", "alias.md"));
+    const hard = buildResourceUri("test", "pub/alias.md");
+    const ordinary = buildResourceUri("test", "pub/ordinary.md");
+
+    // The read path must really refuse the alias first, or the agreement below proves nothing.
+    expect(() => readResourceFor({ registry: v.registry }, v.vaultRegistry, ctx, hard)).toThrow();
+    expect(canReadResourceUri(v.vaultRegistry, ctx, hard, aclFor)).toBeNull();
+    expect(canReadResourceUri(v.vaultRegistry, ctx, ordinary, aclFor)).toEqual({
+      vaultId: "test",
+      relPath: "pub/ordinary.md",
+    });
+
+    unlinkSync(join(v.root, "pub", "ordinary.md"));
+    expect(canReadResourceUri(v.vaultRegistry, ctx, ordinary, aclFor)).toEqual({
+      vaultId: "test",
+      relPath: "pub/ordinary.md",
+    });
   });
 
   it("(e) canReadResourceUri: null for every refusal", () => {
@@ -414,5 +470,98 @@ describe("resources/updated over HTTP (modern era)", () => {
 
   it("each test vault has its own change bus", () => {
     expect(vault().vaultRegistry.changes).not.toBe(vault().vaultRegistry.changes);
+  });
+});
+
+/** A signed token with no `sub` claim: a usable-looking token with no identity (see mcp-advisories). */
+async function tokenWithoutSub(): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return new SignJWT({ scopes: ["*"], aud: "http://test", iat: now, exp: now + 600 })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .sign(new TextEncoder().encode(signingKey));
+}
+
+/** One `subscriptions/listen` that asks for both advisory push and resource updates (Finding 3). */
+describe("one listen asking for advisory and resource notifications", () => {
+  const ADVISORY_FRAME = "notifications/advisory";
+  const ADVISORY_EVENT = {
+    chunkId: "hit",
+    goalId: "g1",
+    goalText: "goal",
+    score: 0.9,
+    candidateKind: "note_changed",
+  };
+
+  function startBoth() {
+    const v = vault();
+    const advisoryBus = createAdvisoryBus();
+    return { bus: v.vaultRegistry.changes, advisoryBus, app: boot(v, advisoryBus) };
+  }
+
+  it(
+    "acks both keys in ONE frame, then delivers a resource update and an advisory on that stream",
+    async () => {
+      const { bus, advisoryBus, app } = startBoth();
+      const s = await openListen(app, await tokenFor(["*"]), [PUB], { id: 21, advisory: true });
+      try {
+        expect(s.status).toBe(200);
+        expect(await s.waitFor((fs) => fs.some(isAck))).toBe(true);
+        const acks = s.frames.filter(isAck);
+        expect(acks).toHaveLength(1);
+        expect(acks[0]?.params?.notifications?.[ADVISORY_SUBSCRIPTION_KEY]).toBe(true);
+        expect(acks[0]?.params?.notifications?.resourceSubscriptions).toEqual([PUB]);
+        expect(acks[0]?.params?._meta?.[SUB_KEY]).toBe(21);
+
+        bus.publish({ vaultId: "test", relPath: "pub/a.md" });
+        advisoryBus.publish({
+          vaultId: "test",
+          caller: "agent-1",
+          sessionId: "s1",
+          advisories: [ADVISORY_EVENT],
+        });
+
+        expect(await s.waitFor((fs) => fs.some(updateFor(PUB)))).toBe(true);
+        expect(await s.waitFor((fs) => fs.some((f) => f.method === ADVISORY_FRAME))).toBe(true);
+      } finally {
+        await s.stop();
+      }
+    },
+    stallTimeout(30_000),
+  );
+
+  it("refuses the combined request from a caller with no usable identity: HTTP 403, no stream", async () => {
+    const { app } = startBoth();
+    const s = await openListen(app, await tokenWithoutSub(), [PUB], { id: 22, advisory: true });
+    try {
+      expect(s.status).toBe(403);
+      expect(s.frames.some(isAck)).toBe(false);
+    } finally {
+      await s.stop();
+    }
+  });
+
+  it("refuses the combined request naming more than 256 URIs: HTTP 400 with -32602, no stream", async () => {
+    const { app } = startBoth();
+    const uris = Array.from({ length: 257 }, (_, i) => buildResourceUri("test", `n/${i}.md`));
+    const s = await openListen(app, await tokenFor(["*"]), uris, { id: 23, advisory: true });
+    try {
+      expect(s.status).toBe(400);
+      expect(s.raw).toContain("-32602");
+      expect(s.frames.some(isAck)).toBe(false);
+    } finally {
+      await s.stop();
+    }
+  });
+});
+
+describe("only subscriptions/listen opens an extension stream", () => {
+  it("a modern tools/list that carries the advisory key is answered as JSON, not as an SSE stream", async () => {
+    const app = boot(vault(), createAdvisoryBus());
+    const listen = JSON.parse(listenBody([], true, 31, true));
+    const body = JSON.stringify({ ...listen, method: "tools/list" });
+    const headers = { ...listenHeaders(await tokenFor(["*"]), true), "mcp-method": "tools/list" };
+    const res = await app.app.request(LISTEN_URL, { method: "POST", headers, body });
+    expect(res.headers.get("content-type") ?? "").not.toContain("text/event-stream");
+    expect(await res.json()).toMatchObject({ jsonrpc: "2.0", id: 31 });
   });
 });

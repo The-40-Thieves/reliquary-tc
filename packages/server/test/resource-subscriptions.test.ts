@@ -138,6 +138,25 @@ describe("subscribesToResources", () => {
     expect(subscribesToResources({ params: { notifications: {} } })).toBe(false);
     expect(subscribesToResources(null)).toBe(false);
   });
+
+  it("is false for another RPC method that carries the same notifications key", () => {
+    const toolsCall = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { notifications: { resourceSubscriptions: [URI_A] } },
+    };
+    expect(subscribesToResources(toolsCall)).toBe(false);
+  });
+
+  it("is false when the method is missing", () => {
+    const noMethod = {
+      jsonrpc: "2.0",
+      id: 1,
+      params: { notifications: { resourceSubscriptions: [URI_A] } },
+    };
+    expect(subscribesToResources(noMethod)).toBe(false);
+  });
 });
 
 describe("serveResourceSubscription", () => {
