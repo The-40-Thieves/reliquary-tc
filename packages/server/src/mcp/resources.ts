@@ -316,6 +316,29 @@ export function readResource(
   return { contents: [{ uri, mimeType: MIME_MARKDOWN, text }] };
 }
 
+/** Subscription read check: readResource's refusals, no stat or read; null on any refusal. */
+export function canReadResourceUri(
+  vaultRegistry: VaultRegistry,
+  ctx: CallerContext,
+  uri: string,
+  aclFor: VaultAclResolver,
+): { vaultId: string; relPath: string } | null {
+  if (isCatalogResourceUri(uri)) return null;
+  if (ctx.authenticated === false) return null;
+  if (!grantsAll(ctx.grantedScopes, ["read:notes"])) return null;
+  try {
+    const { vaultId, relPath } = parseResourceUri(uri);
+    if (vaultId !== ctx.vaultId && !servesForeignVaults(ctx, vaultRegistry)) return null;
+    const v = vaultRegistry.resolve(vaultId);
+    const rel = normalizeVaultPath(relPath);
+    enforcePathAcl(aclOfVault(ctx, vaultId, aclFor), "read", rel, v.root, ctx.grantedScopes);
+    resolveVaultPath(v.root, rel);
+    return { vaultId, relPath: rel };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The two production entry points (mcp/server.ts): readResource / listResources with the
  * registry-derived inputs every real call needs already bound — the configured response ceiling
