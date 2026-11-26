@@ -39,19 +39,22 @@ gateway path that sampling must not silently replace (see `sampleViaClient`).
   rejects the whole reply (`sampling.status: rejected_response`); nothing of a rejected reply is
   echoed. The model name is echoed only if it looks like one.
 - **Provenance.** `source` is `client-sampled` or `heuristic`; `sampling.status` is one of `sampled`,
-  `unsupported` (client did not advertise sampling), `declined_or_failed`, `rejected_response`.
+  `unsupported` (sampling is not available on the connection: the client did not advertise it, or
+  the connection uses the 2026-07-28 protocol), `declined_or_failed`, `rejected_response`.
 - **Fallback.** No sampling, a declined request or a rejected reply all return a deterministic
   heuristic: existing vault tags whose words all occur in the note, most specific first. It never
   invents a tag and never calls the gateway, because moving inference to a provider the operator did
   not choose is the thing `sampleViaClient` refuses to do. The tag `client-sampling` marks the tool
   for `toolVisibility`.
-- **Transports.** `ctx.sample` is attached only when the client advertised `sampling`. Over stdio
-  (a legacy `initialize` carries the capabilities) and an in-memory connection that is proven by
-  `suggest-tags-sampling-e2e.test.ts`. Over stateless Streamable HTTP, legacy requests never populate
-  client capabilities, so they get the heuristic; a modern request declaring `sampling` gets
-  `ctx.sample`, but whether a real client can answer a server-initiated request there is the
-  separate, unverified-in-this-repo claim the compat matrix records for roots. A failed round trip
-  lands in the `declined_or_failed` fallback, never in an error.
+- **Transports.** `ctx.sample` is attached only when the client advertised `sampling` on a
+  connection older than 2026-07-28. Over stdio (a legacy `initialize` carries the capabilities) and
+  an in-memory connection that is proven by `suggest-tags-sampling-e2e.test.ts`. Over stateless
+  Streamable HTTP, legacy requests never populate client capabilities, so they get the heuristic.
+  On a 2026-07-28 connection, HTTP or stdio, the SDK refuses `sampling/createMessage` and
+  `roots/list` before anything is sent, so no `ctx.sample` is attached and `ctx.roots` resolves
+  `undefined`, whatever the client declared; `suggest_tags` reports `unsupported` there. Asking
+  through the era's multi-round-trip result is not implemented. A failed round trip on an older
+  connection lands in the `declined_or_failed` fallback, never in an error.
 
 ## `episode_type` becomes a structural value, not a hardcoded literal
 
