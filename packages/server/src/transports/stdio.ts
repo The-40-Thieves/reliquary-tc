@@ -1,20 +1,87 @@
 import type { Readable, Writable } from "node:stream";
-import type { Server } from "@modelcontextprotocol/server";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { StdioServerTransport, serveStdio } from "@modelcontextprotocol/server/stdio";
+import type { createMcpServer } from "../mcp/server";
 
 /**
- * Connect an assembled MCP server to stdio, the trusted local transport.
- * Returns the transport so the caller can close it on shutdown.
- *
- * SDK 2.3: a `Server` serves one connection at a time and `connect()` rejects with
- * `ALREADY_CONNECTED` on a second call. stdio is one process-lifetime connection, so this is
- * called once per server; `io` exists so a test can drive the real transport over in-memory streams.
+ * The SDK's stdio transport, plus a callback when the wire itself closes. The SDK closes it on its
+ * own after a fatal read (input over the buffer limit) or write (stdout error) error, and stdin
+ * never emits end then, so the stdin listeners alone would miss that disconnect.
  */
-export async function connectStdio(
-  server: Server,
-  io?: { stdin: Readable; stdout: Writable },
-): Promise<StdioServerTransport> {
-  const transport = new StdioServerTransport(io?.stdin, io?.stdout);
-  await server.connect(transport);
-  return transport;
+class ObservedStdioTransport extends StdioServerTransport {
+  constructor(
+    stdin: Readable | undefined,
+    stdout: Writable | undefined,
+    private readonly onWireClosed: () => void,
+  ) {
+    super(stdin, stdout);
+  }
+  override async close(): Promise<void> {
+    await super.close();
+    this.onWireClosed();
+  }
+}
+
+export interface StdioEraOptions {
+  /** Test seam: in-memory streams in place of the process's stdin and stdout. */
+  io?: { stdin: Readable; stdout: Writable };
+  /** Fires at most once per connection, when the client's handshake (or first modern request) lands. */
+  onHandshake?: () => void;
+  /** Fires at most once, when the input stream ends or the wire closes itself after a fatal read or write error. Never fires for our own close(). */
+  onEof?: () => void;
+  /** Receives transport and protocol errors the SDK reports. */
+  onError?: (error: Error) => void;
+}
+
+/**
+ * Serve MCP over stdio, both protocol revisions. The SDK's `serveStdio` reads the client's opening
+ * message and builds a server instance for the era it names: a 2025 `initialize` or a claim-less
+ * request gets the "legacy" instance, a 2026-07-28 envelope gets "modern". A client that probes
+ * with a modern `server/discover` and then opens with a legacy `initialize` gets both in turn: the
+ * modern instance is closed and a legacy one is built. After that the era does not change.
+ *
+ * Disconnect is the input ending OR the wire transport closing itself after a fatal read or write
+ * error, not an instance's `onclose`: that discarded probe instance also closes, and that must not
+ * look like a disconnect.
+ */
+export function serveStdioEras(
+  build: (era: "legacy" | "modern") => ReturnType<typeof createMcpServer>,
+  opts: StdioEraOptions = {},
+): { close(): Promise<void> } {
+  let handshaken = false;
+  const handshake = () => {
+    if (handshaken) return;
+    handshaken = true;
+    opts.onHandshake?.();
+  };
+  const factory = ({ era }: { era: "legacy" | "modern" }) => {
+    const server = build(era);
+    if (era === "legacy") server.oninitialized = handshake;
+    // A modern client sends no `initialize`; its first request is the handshake.
+    else setImmediate(handshake);
+    return server;
+  };
+
+  const stdin = opts.io?.stdin ?? process.stdin;
+  let closing = false;
+  let eofFired = false;
+  const onEnd = () => {
+    if (eofFired || closing) return;
+    eofFired = true;
+    opts.onEof?.();
+  };
+  stdin.on("end", onEnd);
+  stdin.on("close", onEnd);
+
+  const handle = serveStdio(factory, {
+    transport: new ObservedStdioTransport(opts.io?.stdin, opts.io?.stdout, onEnd),
+    onerror: opts.onError,
+  });
+  return {
+    close: async () => {
+      closing = true;
+      stdin.off("end", onEnd);
+      stdin.off("close", onEnd);
+      await handle.close();
+    },
+  };
 }

@@ -58,6 +58,8 @@ Evidence key:
 | Capability | 2025-11-25 (legacy) | 2026-07-28 (modern) | Evidence |
 |---|---|---|---|
 | Connection model | `initialize` handshake, session-scoped | `server/discover`, stateless per-request (SEP-2575) | suite — `mcp-protocol-eras.test.ts`, `protocol-2026-conformance.test.ts` |
+| Stdio era | served; chosen by the opening `initialize` | served; chosen by a `server/discover` or a request carrying the envelope. The era is fixed for the connection, decided by the client's opening message | suite — `stdio-modern-era.test.ts` |
+| Resource subscriptions over stdio | `resources.subscribe` offered | not offered yet (no resource updates are published on stdio for 2026-07-28); a `subscriptions/listen` asking for resource subscriptions is acknowledged with an empty filter (`notifications: {}`), so no resource update is delivered | suite — `stdio-modern-era.test.ts` |
 | `tools/list`, `tools/call` | works | works, including with **no** prior handshake at all | suite — `mcp-protocol-eras.test.ts` ("serves a MODERN client: tools/call with NO initialize handshake") |
 | `Mcp-Session-Id` | issued | never issued | suite — `protocol-2026-conformance.test.ts` (SEP-2567) |
 | Required routing headers (`Mcp-Method`/`Mcp-Name`) | not required | required; a body/header mismatch is refused with error code `-32020` | suite — `protocol-2026-conformance.test.ts`, `mcp-protocol-eras.test.ts` (SEP-2243) |

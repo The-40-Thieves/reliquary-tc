@@ -20,7 +20,7 @@
 
 **Do I need Rust to install it?** No. Prebuilt native modules ship for **eight platform triples** (linux x64/arm64 × gnu/musl, darwin x64/arm64, win32 x64/arm64). Anything else uses a numerically identical pure-JS fallback. Rust is only needed to build the native module yourself.
 
-**Which MCP clients work?** Any MCP 2025-11-25 client. STDIO for Claude Desktop / Claude Code / Cursor; Streamable HTTP for HTTP local/remote; an MCPB bundle for one-click hosts. The server also exposes MCP Resources and Prompts. HITL uses a custom `elicit_token` pattern, so confirmations work even on clients without native elicitation support.
+**Which MCP clients work?** Any client that speaks MCP 2025-11-25 or 2026-07-28; the server serves both. STDIO for Claude Desktop / Claude Code / Cursor; Streamable HTTP for HTTP local/remote; an MCPB bundle for one-click hosts. The server also exposes MCP Resources and Prompts. HITL uses a custom `elicit_token` pattern, so confirmations work even on clients without native elicitation support.
 
 **How do I confirm a destructive op?** The tool returns `elicit_required` with an `elicit_token`; re-invoke the same tool with that token within 5 minutes. Tokens are single-use and bound to the exact tool + args. Some operations (e.g. `git_commit`, command execution) sit on a hardcoded HITL floor and always confirm. See **[[Security and ACL]]**.
 

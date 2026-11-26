@@ -12,6 +12,7 @@
 import { PassThrough } from "node:stream";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { type ServerConfig, ServerConfigSchema } from "@the-40-thieves/reliquary-tc-shared";
 import { SignJWT } from "jose";
 import { describe, expect, it } from "vitest";
@@ -21,12 +22,39 @@ import { provisionCacheDb } from "../src/db/provision";
 import { type CallerContext, ToolRegistry } from "../src/mcp/registry";
 import { createMcpServer } from "../src/mcp/server";
 import { startHttp } from "../src/transports/http";
-import { connectStdio } from "../src/transports/stdio";
+import { serveStdioEras } from "../src/transports/stdio";
 import { openMemoryDb } from "./helpers";
 import { stallTimeout } from "./stall-timeouts";
+import { awaitStdioReply, collectStdioReplies } from "./stdio-reply-reader";
+import { stdioTestBuilder } from "./stdio-test-server";
 
 const SECRET = "test-only-secret-not-a-real-credential-0123456789";
 const MODERN = "2026-07-28";
+
+/** A stdio server with one `ping` tool; `built` holds the instance the entry pinned to the connection. */
+function pingBuilder() {
+  const inner = stdioTestBuilder({ tool: "ping", result: { pong: true } });
+  const built: { server?: ReturnType<typeof createMcpServer> } = {};
+  const build = (era: "legacy" | "modern") => {
+    const server = inner(era);
+    built.server = server;
+    return server;
+  };
+  return { build, built };
+}
+
+/** In-memory stdio streams: `send` writes one message, `reply` waits for the response to one id. */
+function stdioSession() {
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const replies = collectStdioReplies(stdout);
+  return {
+    stdin,
+    stdout,
+    send: (m: object) => stdin.write(`${JSON.stringify(m)}\n`),
+    reply: (id: number, method: string) => awaitStdioReply(replies, id, method),
+  };
+}
 
 function rendezvousRegistry(parties: number) {
   const registry = new ToolRegistry({ rootResolver: () => undefined });
@@ -140,53 +168,11 @@ describe("SDK 2.3 one-connection-per-server rule", () => {
   it(
     "a stdio round trip works over the real transport, and a second connect is refused",
     async () => {
-      const db = openMemoryDb();
-      provisionCacheDb(db);
-      const registry = new ToolRegistry({ rootResolver: () => undefined });
-      registry.register({
-        name: "ping",
-        description: "test-only",
-        inputSchema: z.object({}),
-        requiredScopes: [],
-        handler: () => ({ pong: true }),
-      } as never);
-      const server = createMcpServer({
-        name: "reliquary-tc",
-        version: "0.0.0-test",
-        registry,
-        context: (): CallerContext => ({
-          caller: "stdio",
-          authenticated: true,
-          grantedScopes: new Set(["*"]),
-          vaultId: "v1",
-          db,
-        }),
-        visibility: { grantedScopes: new Set(["*"]) },
-      });
-      const stdin = new PassThrough();
-      const stdout = new PassThrough();
-      const lines: string[] = [];
-      let pending = "";
-      stdout.on("data", (chunk: Buffer) => {
-        pending += chunk.toString("utf8");
-        for (let nl = pending.indexOf("\n"); nl >= 0; nl = pending.indexOf("\n")) {
-          lines.push(pending.slice(0, nl));
-          pending = pending.slice(nl + 1);
-        }
-      });
-      const reply = async (id: number): Promise<Record<string, any>> => {
-        for (let i = 0; i < 400; i++) {
-          const hit = lines.map((l) => JSON.parse(l)).find((m) => m.id === id);
-          if (hit) return hit;
-          await new Promise((r) => setTimeout(r, 10));
-        }
-        throw new Error(`no stdio reply for id ${id}`);
-      };
-      const send = (m: object) => stdin.write(`${JSON.stringify(m)}\n`);
-
-      const transport = await connectStdio(server, { stdin, stdout });
+      const { build, built } = pingBuilder();
+      const io = stdioSession();
+      const handle = serveStdioEras(build, { io: { stdin: io.stdin, stdout: io.stdout } });
       try {
-        send({
+        io.send({
           jsonrpc: "2.0",
           id: 1,
           method: "initialize",
@@ -196,24 +182,26 @@ describe("SDK 2.3 one-connection-per-server rule", () => {
             clientInfo: { name: "stdio-test", version: "1" },
           },
         });
-        expect((await reply(1)).result.serverInfo.name).toBe("reliquary-tc");
-        send({ jsonrpc: "2.0", method: "notifications/initialized" });
-        send({
+        expect((await io.reply(1, "initialize")).result.serverInfo.name).toBe("reliquary-tc");
+        io.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+        io.send({
           jsonrpc: "2.0",
           id: 2,
           method: "tools/call",
           params: { name: "ping", arguments: {} },
         });
-        const call = (await reply(2)).result;
+        const call = (await io.reply(2, "tools/call")).result;
         expect(call.isError).toBeFalsy();
         expect(call.structuredContent).toEqual({ pong: true });
 
-        // The rule itself: this server is spoken for until its transport closes.
+        // The rule itself: the server the entry pinned is spoken for until its connection closes.
+        const pinned = built.server;
+        if (pinned === undefined) throw new Error("the entry built no server");
         await expect(
-          connectStdio(server, { stdin: new PassThrough(), stdout: new PassThrough() }),
+          pinned.connect(new StdioServerTransport(new PassThrough(), new PassThrough())),
         ).rejects.toThrow(/separate Server instance|already connected/i);
       } finally {
-        await transport.close();
+        await handle.close();
       }
     },
     stallTimeout(30_000),
