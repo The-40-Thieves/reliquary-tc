@@ -349,20 +349,9 @@ const MATRIX: MatrixCell[] = [
       "(the era's replacement is the multi-round-trip result), so the server does not ask.",
     provenance: "asserted-from-code",
     assert: async () => {
-      const h = await boot();
-      try {
-        const r = await modern(
-          h.port,
-          "tools/call",
-          { name: "echo_caller_context", arguments: {} },
-          "echo_caller_context",
-        );
-        expect(r.status).toBe(200);
-        expect(r.json.result.structuredContent.has_roots).toBe(true);
-        expect(r.json.result.structuredContent.roots).toBeNull();
-      } finally {
-        await h.close();
-      }
+      const seen = await modernEcho();
+      expect(seen.has_roots).toBe(true);
+      expect(seen.roots).toBeNull();
     },
   },
 
@@ -400,21 +389,7 @@ const MATRIX: MatrixCell[] = [
       "`_meta.clientCapabilities` on the call: the SDK refuses `sampling/createMessage` on a " +
       "2026-07-28 connection before anything is sent, so a hook there could only fail.",
     provenance: "asserted-from-code",
-    assert: async () => {
-      const h = await boot();
-      try {
-        const r = await modern(
-          h.port,
-          "tools/call",
-          { name: "echo_caller_context", arguments: {} },
-          "echo_caller_context",
-        );
-        expect(r.status).toBe(200);
-        expect(r.json.result.structuredContent.has_sample).toBe(false);
-      } finally {
-        await h.close();
-      }
-    },
+    assert: async () => expect((await modernEcho()).has_sample).toBe(false),
   },
 
   // --- server/discover -------------------------------------------------------------------------
@@ -459,6 +434,19 @@ const MATRIX: MatrixCell[] = [
     },
   },
 ];
+
+/** What the echo tool saw on one 2026-07-28 call that declares `roots` and `sampling`. */
+async function modernEcho(): Promise<Record<string, unknown>> {
+  const h = await boot();
+  try {
+    const call = { name: "echo_caller_context", arguments: {} };
+    const r = await modern(h.port, "tools/call", call, "echo_caller_context");
+    expect(r.status).toBe(200);
+    return r.json.result.structuredContent;
+  } finally {
+    await h.close();
+  }
+}
 
 /** Every cell the matrix declares "asserted-from-code" must actually run — and only those cells. */
 const executed = new Set<string>();
