@@ -20,6 +20,7 @@
 // advisory-policy.ts is per-session), so the event also carries sessionId for the client to key on.
 
 import { CURRENT_NAMES, LEGACY_NAMES } from "@the-40-thieves/reliquary-tc-shared";
+import { type ListenSource, serveListenSources } from "./listen-stream";
 
 /** One sweep's selection for one session, ready to cross the wire. Deliberately NOT `ScoredAdvisory`
  *  verbatim — the wire shape is a boundary a caller depends on, the internal type is not, and the
@@ -111,9 +112,9 @@ export interface AdvisoryStreamOwner {
 }
 
 /**
- * Serve the advisory push stream. Ack first (carrying the subscription id, exactly as the core
- * streams and the Tasks extension do), then one `notifications/advisory` frame per matching
- * publish for as long as the connection stays open.
+ * This owner's share of an advisory listen stream. Its ack names the advisory key, and each
+ * matching publish becomes one `notifications/advisory` frame for as long as the connection stays
+ * open.
  *
  * REFUSES rather than serves when `owner.caller` is not an identified, non-empty string.
  * `tools/m8/feedback-scope.ts` already draws this exact line for `record_retrieval_feedback`
@@ -123,12 +124,11 @@ export interface AdvisoryStreamOwner {
  * means an unidentified caller never holds a live stream that could leak into, and never leaks out
  * of, another unidentified caller's advisories.
  */
-export function serveAdvisorySubscription(
+export function advisoryListenSource(
   body: unknown,
   bus: AdvisoryBus,
   owner: AdvisoryStreamOwner,
-  signal: AbortSignal,
-): Response {
+): ListenSource | Response {
   const id = (body as { id?: string | number | null } | null)?.id ?? null;
   const identified = typeof owner.caller === "string" && owner.caller.length > 0;
   if (!identified) {
@@ -145,25 +145,10 @@ export function serveAdvisorySubscription(
       { status: 403, headers: { "content-type": "application/json" } },
     );
   }
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const send = (frame: Record<string, unknown>) => {
-        try {
-          controller.enqueue(encoder.encode(`event: message\ndata: ${JSON.stringify(frame)}\n\n`));
-        } catch {
-          /* the client hung up between the check and the write */
-        }
-      };
-      send({
-        jsonrpc: "2.0",
-        method: "notifications/subscriptions/acknowledged",
-        params: {
-          notifications: { [requestedAdvisoryKey(body) ?? ADVISORY_SUBSCRIPTION_KEY]: true },
-          _meta: { "io.modelcontextprotocol/subscriptionId": id },
-        },
-      });
-      const unsubscribe = bus.onAdvisory((event) => {
+  return {
+    ack: { [requestedAdvisoryKey(body) ?? ADVISORY_SUBSCRIPTION_KEY]: true },
+    attach(send) {
+      return bus.onAdvisory((event) => {
         // OWNERSHIP, on every frame — the same discipline serveTaskSubscription applies to task
         // change events, applied here to advisory push.
         if (event.vaultId !== owner.vaultId) return;
@@ -174,23 +159,18 @@ export function serveAdvisorySubscription(
           params: { sessionId: event.sessionId, advisories: event.advisories },
         });
       });
-      const close = () => {
-        unsubscribe();
-        try {
-          controller.close();
-        } catch {
-          /* already closed */
-        }
-      };
-      if (signal.aborted) close();
-      else signal.addEventListener("abort", close, { once: true });
     },
-  });
-  return new Response(stream, {
-    headers: {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-    },
-  });
+  };
+}
+
+export function serveAdvisorySubscription(
+  body: unknown,
+  bus: AdvisoryBus,
+  owner: AdvisoryStreamOwner,
+  signal: AbortSignal,
+): Response {
+  const source = advisoryListenSource(body, bus, owner);
+  if (source instanceof Response) return source;
+  const id = (body as { id?: string | number | null } | null)?.id ?? null;
+  return serveListenSources(id, [source], signal);
 }

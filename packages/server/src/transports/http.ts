@@ -31,7 +31,6 @@ import type { Database } from "../db/types";
 import { createStdioElicitCodec, getDefaultElicitTtlSeconds } from "../elicit";
 import { createServerElicitCodec } from "../elicit-request-state";
 import type { AdvisoryBus } from "../mcp/advisories";
-import { serveAdvisorySubscription, subscribesToAdvisories } from "../mcp/advisories";
 import type { FacadeMode } from "../mcp/facade";
 import type { CallerContext, ToolRegistry } from "../mcp/registry";
 import { createMcpServer } from "../mcp/server";
@@ -52,6 +51,7 @@ import { anonymousGate, isAnonymousCandidate, mixedModeScopes } from "./anonymou
 import { corsMiddleware, corsOriginSet, type HttpAuthExtra } from "./cors";
 import { mountHealthz } from "./healthz";
 import { isHostAllowed, isOriginAllowed } from "./host-guard";
+import { serveListenExtension } from "./http-listen-extensions";
 import { ANONYMOUS_BODY_BOUNDS, AUTHENTICATED_BODY_BOUNDS, readMcpBody } from "./mcp-body";
 import { type ServerHandle, serveHono } from "./serve";
 import { mountVaultSyncWebhook, type VaultSyncWebhookOptions } from "./vault-sync-webhook";
@@ -425,7 +425,7 @@ function contextFromAuthInfo(
  */
 export interface HttpApp {
   app: Hono;
-  /** Publish-side facade over the `subscriptions/listen` bus. No-op when no stream is open. */
+  /** Nothing in production publishes through this; resource updates travel on the vault registry's `changes` bus. */
   notify: ServerNotifier;
   /** Aborts in-flight modern exchanges and closes their per-request instances. */
   close: () => Promise<void>;
@@ -437,6 +437,7 @@ export interface HttpApp {
  */
 export function createHttpApp(opts: HttpAppOptions): HttpApp {
   const app = new Hono();
+  const closing = new AbortController(); // aborted by close(): ends the listen-extension streams
   // The client address is read from the TCP peer before any middleware below can replace the request
   // (hono's bodyLimit does, on /oauth/*): see auth/client-ip.ts. Keep this the first middleware.
   app.use("*", captureClientPeer);
@@ -676,22 +677,32 @@ export function createHttpApp(opts: HttpAppOptions): HttpApp {
         );
       }
     }
-    // THE-634: the advisory push extension, same seam and same reason as the Tasks extension just
-    // above — its subscription key and event are not expressible through the SDK's own
-    // SubscriptionFilter/ServerEvent union either. Only intercepted when a bus is wired (i.e.
-    // experiential.proactive.enabled) AND the client actually asked for advisory notifications.
-    if (
-      opts.advisoryBus &&
-      c.req.header("mcp-protocol-version") === MODERN_PROTOCOL_VERSION &&
-      subscribesToAdvisories(body)
-    ) {
-      return serveAdvisorySubscription(
-        body,
-        opts.advisoryBus,
-        { vaultId: authz.vault ?? opts.vaultId, caller: authz.caller },
-        c.req.raw.signal,
-      );
-    }
+    const authInfo = {
+      token: bearer(c.req.header("authorization")) ?? "",
+      clientId: authz.caller ?? "",
+      scopes: [...authz.scopes],
+      extra: {
+        idempotencyKeyHeader: Array.isArray(body) ? undefined : c.req.header("idempotency-key"),
+        caller: authz.caller,
+        vault: authz.vault,
+        persona: authz.persona,
+        toolVisibility: authz.toolVisibility,
+        verified: authz.verified,
+        surface: surfaceName,
+        ...(authz.anonymous ? { anonymous: true } : {}),
+      },
+    };
+    const extension = serveListenExtension({
+      body,
+      modern: c.req.header("mcp-protocol-version") === MODERN_PROTOCOL_VERSION,
+      signal: AbortSignal.any([c.req.raw.signal, closing.signal]),
+      owner: { vaultId: authz.vault ?? opts.vaultId, caller: authz.caller },
+      advisoryBus: opts.advisoryBus,
+      vaultRegistry: opts.vaultRegistry,
+      aclFor: (vaultId) => opts.registry.aclFor(vaultId),
+      makeContext: () => contextFromAuthInfo(opts, authInfo)(c.req.raw.signal),
+    });
+    if (extension) return extension;
     // Web-standard fetch in, Response out. `authInfo` is how this request's verified identity
     // reaches the factory — strictly pass-through, so the handler never re-derives or re-checks it.
     // NOT closed here any more: the handler is the app's, and closing it per request is what made a
@@ -701,21 +712,7 @@ export function createHttpApp(opts: HttpAppOptions): HttpApp {
       // parses the same bytes a SECOND time on every request — `createMcpHandler` only parses when
       // `parsedBody` is undefined. The guard read the original already (`bodyUsed`); the SDK never reads it.
       ...(body !== undefined ? { parsedBody: body } : {}),
-      authInfo: {
-        token: bearer(c.req.header("authorization")) ?? "",
-        clientId: authz.caller ?? "",
-        scopes: [...authz.scopes],
-        extra: {
-          idempotencyKeyHeader: Array.isArray(body) ? undefined : c.req.header("idempotency-key"),
-          caller: authz.caller,
-          vault: authz.vault,
-          persona: authz.persona,
-          toolVisibility: authz.toolVisibility,
-          verified: authz.verified,
-          surface: surfaceName,
-          ...(authz.anonymous ? { anonymous: true } : {}),
-        },
-      },
+      authInfo,
     });
   };
   app.post("/mcp", mcpPost);
@@ -740,9 +737,13 @@ export function createHttpApp(opts: HttpAppOptions): HttpApp {
     );
   });
 
-  // The handler is the APP's now. Closing it is a shutdown concern, and `notify` is how a change
-  // detected outside any request (the vault watcher) reaches an open subscription stream.
-  return { app, notify: handler.notify, close: () => handler.close() };
+  // The handler is the APP's now; closing it is a shutdown concern. Resource updates travel on the
+  // vault registry's `changes` bus, not `notify`, which nothing in production calls.
+  const close = async (): Promise<void> => {
+    closing.abort();
+    await handler.close();
+  };
+  return { app, notify: handler.notify, close };
 }
 
 export type HttpHandle = ServerHandle & {

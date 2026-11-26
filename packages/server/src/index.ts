@@ -34,4 +34,4 @@ export type { HealthInfo } from "./tools/admin/health";
 export { createHealthTool } from "./tools/admin/health";
 export type { HttpAppOptions, HttpHandle } from "./transports/http";
 export { createHttpApp, startHttp } from "./transports/http";
-export { connectStdio } from "./transports/stdio";
+export { serveStdioEras } from "./transports/stdio";

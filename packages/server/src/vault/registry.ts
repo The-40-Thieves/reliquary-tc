@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { err, type VaultConfigInput, type VaultKind } from "@the-40-thieves/reliquary-tc-shared";
 import { vaultCaseInfo } from "./case-sensitivity";
 import { FolderPins } from "./folder-links";
+import { createResourceChangeBus, type ResourceChangeBus } from "./note-changes";
 import { canonicalFolderOf, rawFolderOf } from "./raw-folder";
 import { rawFolderNames, wikiFolderNames } from "./wiki-folders";
 
@@ -127,6 +128,8 @@ export class VaultRegistry {
   /** `resources.boundVaultOnly`: when true, a trusted (unbound) caller's note resources stay on the
    *  default vault. Fixed at construction, like the folder pins. */
   readonly boundVaultOnly: boolean;
+  /** Note changes seen by the write hooks and the watcher are published here; no listener means a publish does nothing. */
+  readonly changes: ResourceChangeBus = createResourceChangeBus();
 
   constructor(
     vaults: VaultConfigInput[],
