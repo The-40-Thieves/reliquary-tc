@@ -120,6 +120,26 @@ describe("openai/mentions, domain surface", () => {
 });
 
 describe("openai/mentions capability, flag on", () => {
+  it("is not advertised on a tool-budget subset whose tools/list leaves the tool out", async () => {
+    const { client, server } = await connect({ openaiMentions: true, advertise: "essentials" });
+    const ext = (client.getServerCapabilities() as { extensions?: Record<string, unknown> })
+      .extensions;
+    expect((await client.listTools()).tools.map((t) => t.name)).not.toContain("search_mentions");
+    expect(ext?.["openai/mentions"]).toBeUndefined();
+    await client.close();
+    await server.close();
+  });
+
+  it("is advertised on the core subset, which lists the tool", async () => {
+    const { client, server } = await connect({ openaiMentions: true, advertise: "core" });
+    const ext = (client.getServerCapabilities() as { extensions?: Record<string, unknown> })
+      .extensions;
+    expect((await client.listTools()).tools.map((t) => t.name)).toContain("search_mentions");
+    expect(ext?.["openai/mentions"]).toEqual({ searchTool: "search_mentions" });
+    await client.close();
+    await server.close();
+  });
+
   it("is not advertised to a caller who cannot see search_mentions", async () => {
     const visibility = { grantedScopes: new Set(["write:notes"]) };
     const { client, server } = await connect({ openaiMentions: true, visibility });
