@@ -102,6 +102,14 @@ export const ToolFacadeConfigSchema = z.object({
     .describe(
       'Only meaningful when mode is "auto". Explain the auto-mode decision without changing it: one structured `toolFacade.explain` log line per resolution (client name, matched rule, chosen mode) and `server_health`\'s `toolFacade.explanation` for the calling client. Default false.',
     ),
+  // OpenAI @-mention picker (`openai/mentions`): advertises search_mentions as the capability's
+  // searchTool and lists it on the triad and domain surfaces. Off, nothing changes.
+  openaiMentions: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Advertise the search_mentions tool to ChatGPT's @-mention picker: an `openai/mentions` capability naming it, and the tool listed directly on the triad and domain surfaces. Read-only; each call returns resource links to notes the caller may read. Default false.",
+    ),
   // Whether tools/list advertises each tool's `outputSchema`. Results carry `structuredContent` and
   // a text block either way; this only changes the ADVERTISEMENT. "full" (default) is today's
   // behaviour. "omit" is the opt-out for clients that mishandle the field: Cursor blanks a server

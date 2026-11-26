@@ -275,7 +275,13 @@ describe("no tool result hands a client only a link or a blob", () => {
       /type:\s*["'](resource_link|image|resource|audio)["']/.test(readFileSync(f, "utf8")),
     );
     // A new block type must come with a text sibling (ensureTextContent guarantees one) AND an
-    // entry here saying so.
-    expect(offenders).toEqual([]);
+    // entry here saying so. search_mentions returns `type: "resource_link"` items in its declared
+    // structuredContent (the @-mention picker's contract); mcp/tool-result.ts always emits the JSON
+    // text block beside them.
+    const recorded = ["src/tools/m2/search-mentions-tool.ts"];
+    const unrecorded = offenders.filter(
+      (f) => !recorded.some((r) => f.replace(/\\/g, "/").endsWith(r)),
+    );
+    expect(unrecorded).toEqual([]);
   });
 });

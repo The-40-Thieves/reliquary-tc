@@ -28,6 +28,19 @@ function toolAnnotations(def: ToolDefinition): NonNullable<Tool["annotations"]> 
   };
 }
 
+/** `_meta` for a tool: the whole-note size hint (wholeNotes) and the app visibility (appVisible).
+ *  Empty when neither applies, so every other tool's projection is unchanged. */
+function metaOf(
+  def: ToolDefinition,
+  maxResponseBytes: number | undefined,
+): { _meta?: { [key: string]: unknown } } {
+  const meta: Record<string, unknown> = {};
+  if (def.wholeNotes && maxResponseBytes !== undefined)
+    meta[MAX_RESULT_SIZE_META_FIELD] = maxResultSizeChars(maxResponseBytes);
+  if (def.appVisible) meta.ui = { visibility: ["model", "app"] };
+  return Object.keys(meta).length > 0 ? { _meta: meta } : {};
+}
+
 // THE-463: a tool's MCP projection (name/title/description/schemas/annotations/icons) is immutable
 // after registration; flat-mode tools/list rebuilt an identical object per request. Memoized by def
 // identity — the frozen Tool instance survives per-request server churn (transports/http.ts) since
@@ -57,9 +70,7 @@ export function toMcpTool(def: ToolDefinition, options: ProjectionOptions = {}):
     ...outputSchemaField("outputSchema", def.outputSchema),
     annotations: toolAnnotations(def),
     ...(def.icons ? { icons: def.icons } : {}),
-    ...(def.wholeNotes && maxResponseBytes !== undefined
-      ? { _meta: { [MAX_RESULT_SIZE_META_FIELD]: maxResultSizeChars(maxResponseBytes) } }
-      : {}),
+    ...metaOf(def, maxResponseBytes),
   };
   Object.freeze(tool);
   mcpToolMemo.set(def, { tool, budget: maxResponseBytes });

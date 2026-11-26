@@ -147,6 +147,7 @@ search
 search_and_read
 search_dql
 search_jsonlogic
+search_mentions
 search_omnisearch
 search_regex
 search_semantic

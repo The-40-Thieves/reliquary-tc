@@ -169,7 +169,7 @@ const RESOURCE_PAGE_SIZE = 500;
  * HTTP token, `vaultBound: true`) never is, because its tools are pinned to its vault too
  * (registry/input-binding.ts). Nor is any caller when `resources.boundVaultOnly` is set.
  */
-function servesForeignVaults(ctx: CallerContext, vaultRegistry: VaultRegistry): boolean {
+export function servesForeignVaults(ctx: CallerContext, vaultRegistry: VaultRegistry): boolean {
   return ctx.vaultBound !== true && !vaultRegistry.boundVaultOnly;
 }
 

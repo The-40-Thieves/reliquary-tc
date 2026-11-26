@@ -12,6 +12,7 @@ import { z } from "zod";
 import { bm25Score, tokenize } from "../search/native";
 import { profileHiddenTools } from "./capability-hidden";
 import { type InstructionsSurface, routingGuidance } from "./instructions-routing";
+import { SEARCH_MENTIONS_TOOL } from "./openai-extension-names";
 import { TOOL_DOMAINS, type ToolDefinition, type ToolDomain, type ToolRegistry } from "./registry";
 import { relaxVaultInJson } from "./registry/vault-default";
 import { lowerOutputSchema, lowerSchema } from "./schema-lowering";
@@ -38,10 +39,12 @@ export const TRIAD_HOT_PATH_TOOLS = [
 export function triadDirectDefs(
   visible: readonly ToolDefinition[],
   hotPath = false,
+  mentions = false,
 ): ToolDefinition[] {
-  const names: readonly string[] = hotPath
+  const base: readonly string[] = hotPath
     ? [...TRIAD_DIRECT_TOOLS, ...TRIAD_HOT_PATH_TOOLS]
     : TRIAD_DIRECT_TOOLS;
+  const names = mentions ? [...base, SEARCH_MENTIONS_TOOL] : base;
   return names.flatMap((name) => visible.filter((d) => d.name === name));
 }
 
@@ -49,8 +52,9 @@ export function triadDirectTools(
   visible: readonly ToolDefinition[],
   project: (d: ToolDefinition) => Tool,
   hotPath = false,
+  mentions = false,
 ): Tool[] {
-  return triadDirectDefs(visible, hotPath).map((d) => {
+  return triadDirectDefs(visible, hotPath, mentions).map((d) => {
     const tool = project(d);
     return { ...tool, _meta: { ...tool._meta, ...ALWAYS_LOAD_META } };
   });

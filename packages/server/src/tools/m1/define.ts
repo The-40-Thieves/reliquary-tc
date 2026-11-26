@@ -42,6 +42,8 @@ export interface ToolSpec<S extends z.ZodTypeAny, O, B extends object = Record<n
   icons?: ToolIcon[];
   /** See ToolDefinition.wholeNotes. */
   wholeNotes?: boolean;
+  /** See ToolDefinition.appVisible. */
+  appVisible?: boolean;
   destructive?: boolean;
   /** THE-824: see ToolDefinition.conditionallyDestructive — display-only, never read by dispatch. */
   conditionallyDestructive?: boolean;

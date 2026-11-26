@@ -153,7 +153,7 @@ const M1_SAMPLING_CONSUMERS = ["suggest_tags"] as const;
 const M1_PROVENANCE = ["get_provenance"] as const;
 
 // `get_conventions` (the SCHEMA.md rules for a folder): a read agents call before writing, but the
-// `core` profile is pinned at 105 tools (tool-facade-profile.test.ts, docgen-stats.test.ts), so it
+// `core` profile is pinned at 106 tools (tool-facade-profile.test.ts, docgen-stats.test.ts), so it
 // stays extended-only until that cap is re-decided. It stays registered and discoverable.
 const M1_CONVENTIONS = ["get_conventions"] as const;
 

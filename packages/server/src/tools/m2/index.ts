@@ -3,6 +3,7 @@
 import type { ToolRegistry } from "../../mcp/registry";
 import { buildIndexTools } from "./index-tools";
 import { buildSearchFetchTools } from "./search-fetch-tools";
+import { buildSearchMentionsTool } from "./search-mentions-tool";
 import { buildSearchTools } from "./search-tools";
 import type { M2Deps } from "./shared";
 
@@ -16,4 +17,6 @@ export function registerM2Tools(registry: ToolRegistry, deps: M2Deps): void {
   const searchVault = searchTools.find((t) => t.name === "search_vault");
   if (!searchVault) throw new Error("search_vault is not registered; search needs it");
   for (const tool of buildSearchFetchTools(deps, searchVault)) registry.register(tool);
+  // Always registered (the registered-tool manifest stays static); only the flag lists or names it.
+  registry.register(buildSearchMentionsTool(deps, (id) => registry.aclFor(id)));
 }

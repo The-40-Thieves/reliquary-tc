@@ -1,0 +1,62 @@
+// The OpenAI MCP extensions this server advertises (node-v0.2.1): `openai/mentions` names the
+// search tool a ChatGPT @-mention picker calls per keystroke. Everything here is behind
+// `toolFacade.openaiMentions` (default off): with the flag off these helpers return nothing, so the
+// capabilities and every tools/list surface are unchanged.
+import type { Tool } from "@modelcontextprotocol/server";
+import { domainTools } from "./facade";
+import { OPENAI_MENTIONS_EXTENSION, SEARCH_MENTIONS_TOOL } from "./openai-extension-names";
+import type { ToolRegistry } from "./registry";
+import { TASKS_EXTENSION } from "./tasks";
+import { type AdvertiseSubset, isAdvertisedIn } from "./tool-profiles";
+import { projectTool } from "./tool-projection";
+import type { VisibilityCaller } from "./visibility";
+
+export interface OpenAiExtensionOptions {
+  registry: Pick<ToolRegistry, "list" | "listVisible" | "maxResponseBytes">;
+  openaiMentions?: boolean;
+  jobQueue?: unknown;
+  servesTaskMethods?: boolean;
+  outputSchema?: "full" | "omit";
+  /** The caller tools/list answers; the capability is offered only when it can see the tool. */
+  visibility: VisibilityCaller;
+  /** The tool-budget subset; anything but "all" is a flat listing that may leave the tool out. */
+  advertise?: AdvertiseSubset;
+}
+
+/** The `capabilities` fields createMcpServer spreads in: `{ extensions }` when at least one
+ *  extension applies (Tasks when a queue backs it, `openai/mentions` when the flag is on and the
+ *  tool is registered), else `{}`. */
+export function extensionsCapability(
+  opts: OpenAiExtensionOptions,
+): { extensions: Record<string, Record<string, string>> } | Record<never, never> {
+  const extensions: Record<string, Record<string, string>> = {
+    ...(opts.jobQueue && opts.servesTaskMethods !== false ? { [TASKS_EXTENSION]: {} } : {}),
+    ...(mentionsEnabled(opts)
+      ? { [OPENAI_MENTIONS_EXTENSION]: { searchTool: SEARCH_MENTIONS_TOOL } }
+      : {}),
+  };
+  return Object.keys(extensions).length > 0 ? { extensions } : {};
+}
+
+/** The flag is on AND this caller's tools/list shows the tool (the capability names it, so the
+ *  caller must see it listed: scopes, static and persona visibility and the advertised subset). */
+function mentionsEnabled(opts: OpenAiExtensionOptions): boolean {
+  return (
+    opts.openaiMentions === true &&
+    isAdvertisedIn(opts.advertise ?? "all", SEARCH_MENTIONS_TOOL) &&
+    opts.registry.listVisible(opts.visibility).some((d) => d.name === SEARCH_MENTIONS_TOOL)
+  );
+}
+
+/** Domain-mode tools/list: the domain meta-tools, plus the mentions tool listed directly when the
+ *  flag is on. Every registered tool stays callable by name either way. The caller's visible list
+ *  is resolved here, so a bare listing still opens no session (same as the other branches). */
+export function domainSurface(opts: OpenAiExtensionOptions): Tool[] {
+  const visible = opts.registry.listVisible(opts.visibility);
+  const direct = mentionsEnabled(opts)
+    ? visible
+        .filter((d) => d.name === SEARCH_MENTIONS_TOOL)
+        .map(projectTool(opts.outputSchema, opts.registry.maxResponseBytes))
+    : [];
+  return [...domainTools(visible), ...direct];
+}

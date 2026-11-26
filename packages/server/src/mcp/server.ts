@@ -43,7 +43,6 @@ import {
   callCapability,
   DESCRIBE_CAPABILITY_SCHEMA,
   describeCapability,
-  domainTools,
   type FacadeMode,
   FIND_CAPABILITY_SCHEMA,
   findCapabilityResponse,
@@ -54,6 +53,7 @@ import {
 } from "./facade";
 import { createFacadeModeResolver } from "./facade-mode-resolver";
 import { instructionsSurfaceOf } from "./instructions-routing";
+import { domainSurface, extensionsCapability } from "./openai-extensions";
 import { progressReporter } from "./progress-notify";
 import { getPrompt, listPrompts } from "./prompts";
 import type { CallerContext, ToolRegistry } from "./registry";
@@ -70,7 +70,7 @@ import {
 } from "./resources";
 import { advertiseSchemes } from "./security-schemes";
 import { offloadToTask } from "./task-budget";
-import { clientSupportsTasks, MODERN_PROTOCOL_VERSION, TASKS_EXTENSION } from "./tasks";
+import { clientSupportsTasks, MODERN_PROTOCOL_VERSION } from "./tasks";
 import { oversizedToolInput } from "./tool-input-cap";
 import { type AdvertiseSubset, isAdvertisedIn } from "./tool-profiles";
 import { projectTool } from "./tool-projection";
@@ -174,6 +174,8 @@ export interface McpServerOptions {
    *  search_vault, write_note, list_notes) as top-level tools beside search and fetch. Ignored by
    *  every other surface. Advertisement only. See facade.ts TRIAD_HOT_PATH_TOOLS. */
   triadHotPath?: boolean;
+  /** `toolFacade.openaiMentions`: advertise search_mentions as the openai/mentions capability. */
+  openaiMentions?: boolean;
   /** `auth.anonymousDiscovery: "list"`: every tool tools/list returns declares `securitySchemes`; the
    *  value is the scopes a facade tool (which fronts tools of every scope) declares. */
   securitySchemes?: readonly string[];
@@ -318,9 +320,7 @@ export function createMcpServer(opts: McpServerOptions): Server {
         // THE-583: advertise the Tasks extension, but only when there is a queue to back it. The
         // client checks this before it is willing to receive a handle, so advertising it without a
         // substrate would invite a task we cannot create. `extensions` is the SEP-2575 field.
-        ...(opts.jobQueue && opts.servesTaskMethods !== false
-          ? { extensions: { [TASKS_EXTENSION]: {} } }
-          : {}),
+        ...extensionsCapability(opts),
       },
       // THE-583: serve BOTH protocol eras from one server. The SDK ships a frozen 2025-11-25 wire
       // codec alongside the 2026-07-28 one and picks per connection, but the shipped
@@ -401,6 +401,7 @@ export function createMcpServer(opts: McpServerOptions): Server {
         opts.registry.listVisible(opts.visibility),
         project,
         opts.triadHotPath,
+        opts.openaiMentions === true,
       );
       return advertiseSchemes(
         opts,
@@ -412,8 +413,7 @@ export function createMcpServer(opts: McpServerOptions): Server {
     }
     if (facadeMode === "domain") {
       // Pure caller, as the triad branch: a bare listing must not open a session.
-      const dvisible = opts.registry.listVisible(opts.visibility);
-      return advertiseSchemes(opts, withCacheHint({ tools: domainTools(dvisible) }, CACHE_PRIVATE));
+      return advertiseSchemes(opts, withCacheHint({ tools: domainSurface(opts) }, CACHE_PRIVATE));
     }
     // Per-caller filtering (THE-250): the caller's resolved scopes + ACL read-only shape the
     // advertised surface, so a caller never sees a tool it could not dispatch. A full grant

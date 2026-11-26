@@ -290,6 +290,7 @@ export async function wireTransports(deps: TransportWiringDeps): Promise<Transpo
         outputSchema: config.toolFacade.outputSchema,
         advertise: config.toolFacade.advertise,
         triadHotPath: config.toolFacade.triadHotPath,
+        openaiMentions: config.toolFacade.openaiMentions,
         // GH #1027: resources/read takes no parameters, so the config default is its only selector.
         responseFormat: config.tools?.defaults?.responseFormat,
         // THE-1098 (GH #964): suppresses buildInstructions' record_retrieval_feedback clause when

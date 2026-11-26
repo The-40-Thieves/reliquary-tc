@@ -269,6 +269,9 @@ export interface ToolDefinition<I = unknown, O = unknown> {
    *  advertises `_meta["anthropic/maxResultSizeChars"]` for it (mcp/result-size.ts) and no other
    *  tool gets the key. Boundary-only; never read by dispatch. */
   wholeNotes?: boolean;
+  /** Advertised as `_meta.ui.visibility: ["model", "app"]`, so an app (the ChatGPT @-mention picker)
+   *  may call it directly. Advertisement only; dispatch authorizes as for every tool. */
+  appVisible?: boolean;
   destructive?: boolean;
   /** THE-824: this tool calls `requireConfirmation` conditionally (folder-boundary crossing,
    *  overwrite, bulk-cost floor, ...), decided at runtime by the handler — so `destructive` above
