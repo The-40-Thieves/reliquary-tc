@@ -63,7 +63,7 @@ interface Note {
 interface Pool {
   vault: SearchedVault;
   notes: Note[];
-  admits: (rel: string) => boolean;
+  admits(rel: string): boolean;
 }
 
 interface Candidate extends Note {

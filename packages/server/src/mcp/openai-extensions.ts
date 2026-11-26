@@ -29,10 +29,12 @@ export interface OpenAiExtensionOptions {
 export function extensionsCapability(
   opts: OpenAiExtensionOptions,
 ): { extensions: Record<string, Record<string, string>> } | Record<never, never> {
-  const extensions: Record<string, Record<string, string>> = {};
-  if (opts.jobQueue && opts.servesTaskMethods !== false) extensions[TASKS_EXTENSION] = {};
-  if (mentionsEnabled(opts))
-    extensions[OPENAI_MENTIONS_EXTENSION] = { searchTool: SEARCH_MENTIONS_TOOL };
+  const extensions: Record<string, Record<string, string>> = {
+    ...(opts.jobQueue && opts.servesTaskMethods !== false ? { [TASKS_EXTENSION]: {} } : {}),
+    ...(mentionsEnabled(opts)
+      ? { [OPENAI_MENTIONS_EXTENSION]: { searchTool: SEARCH_MENTIONS_TOOL } }
+      : {}),
+  };
   return Object.keys(extensions).length > 0 ? { extensions } : {};
 }
 
