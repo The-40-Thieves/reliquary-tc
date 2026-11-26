@@ -2,7 +2,7 @@ import { linkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { FolderAcl } from "../src/acl";
-import type { CallerContext } from "../src/mcp/registry";
+import { type CallerContext, ToolRegistry } from "../src/mcp/registry";
 import { parseResourceUri } from "../src/mcp/resources";
 import { buildSearchMentionsTool, SearchMentionsInput } from "../src/tools/m2/search-mentions-tool";
 import { VaultRegistry } from "../src/vault/registry";
@@ -198,7 +198,7 @@ interface TwoVaultOptions {
 
 /** Two vaults, `main` and `work`, each holding Hello.md. The returned call answers the hits as
  *  sorted `<vault>/<path>` strings. */
-function twoVaults(opts: TwoVaultOptions = {}) {
+function twoVaultRegistry(opts: TwoVaultOptions = {}): VaultRegistry {
   const vaults = ["main", "work"].map((id) => {
     const path = makeTempDir("obtc-mentions-multi-");
     tmp.push(path);
@@ -206,9 +206,11 @@ function twoVaults(opts: TwoVaultOptions = {}) {
     opts.setup?.(path, id);
     return { id, path };
   });
-  const vaultRegistry = new VaultRegistry(vaults, undefined, undefined, {
-    boundVaultOnly: opts.boundVaultOnly,
-  });
+  return new VaultRegistry(vaults, undefined, undefined, { boundVaultOnly: opts.boundVaultOnly });
+}
+
+function twoVaults(opts: TwoVaultOptions = {}) {
+  const vaultRegistry = twoVaultRegistry(opts);
   const tool = buildSearchMentionsTool({ vaultRegistry }, (id) =>
     id === "work" ? opts.workAcl : undefined,
   );
@@ -260,5 +262,57 @@ describe("search_mentions offers only links resources/read opens", () => {
     const call = twoVaults({ boundVaultOnly: true });
     expect(await call({}, "work")).toEqual([]);
     expect(await call({}, "main")).toEqual(["main/Hello.md"]);
+  });
+});
+
+describe("search_mentions through dispatch", () => {
+  // Dispatch re-points ctx.vaultId at the named vault before the handler runs, so the guard has to
+  // judge the caller's own vault, not the one the call acts on.
+  it("under resources.boundVaultOnly, a named foreign vault still returns nothing", async () => {
+    const vaultRegistry = twoVaultRegistry({ boundVaultOnly: true });
+    const registry = new ToolRegistry({
+      rootResolver: () => undefined,
+      visibleVaultIds: () => ["main", "work"],
+    });
+    registry.register(buildSearchMentionsTool({ vaultRegistry }, (id) => registry.aclFor(id)));
+    const ctx: CallerContext = {
+      caller: "t",
+      authenticated: true,
+      grantedScopes: new Set(["*"]),
+      vaultId: "main",
+      db: {} as never,
+    };
+    const foreign = await registry.dispatch("search_mentions", { query: "", vault: "work" }, ctx);
+    if (!foreign.ok) throw new Error(foreign.error.code);
+    expect((foreign.data as { items: Item[] }).items).toEqual([]);
+    const own = await registry.dispatch("search_mentions", { query: "", vault: "main" }, ctx);
+    if (!own.ok) throw new Error(own.error.code);
+    expect((own.data as { items: Item[] }).items.map((i) => i.title)).toEqual(["Hello.md"]);
+  });
+});
+
+describe("search_mentions cost per call", () => {
+  it("resolves the ACL identity only of the rows it offers, not of every indexed note", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 30; i++) files[`n${i}.md`] = "x";
+    const v = vaultWith(files, {}, () => true);
+    try {
+      const ins = v.db.prepare(
+        "INSERT INTO notes (vault_id, path, title, tags, frontmatter, content_hash, mtime, size, indexed_at, acl_path) VALUES (?, ?, ?, '[]', NULL, 'h', ?, 1, 1, ?)",
+      );
+      for (let i = 0; i < 30; i++) ins.run("test", `n${i}.md`, `n${i}`, 1000 + i, `n${i}.md`);
+      const db = v.db as unknown as { prepare: (sql: string) => unknown };
+      const prepare = db.prepare.bind(v.db);
+      let identityLookups = 0;
+      db.prepare = (sql: string) => {
+        if (sql.includes("SELECT DISTINCT acl_path")) identityLookups++;
+        return prepare(sql);
+      };
+      expect(await mentionTitles(v, "", 2)).toEqual(["n29.md", "n28.md"]);
+      expect(identityLookups).toBeGreaterThan(0);
+      expect(identityLookups).toBeLessThan(10);
+    } finally {
+      v.cleanup();
+    }
   });
 });
