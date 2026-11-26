@@ -297,10 +297,7 @@ type HttpAuthInfo = { scopes?: string[]; extra?: Record<string, unknown> } | und
  *  when the request came in on one, else the configured defaults. Looked up by the segment's name
  *  (carried as `authInfo.extra.surface`), so only a name this module's own route set can ever
  *  select a surface. */
-function surfaceOptions(
-  opts: HttpAppOptions,
-  authInfo: HttpAuthInfo,
-): { facadeMode?: FacadeMode | "auto"; advertise?: AdvertiseSubset } {
+function surfaceOptions(opts: HttpAppOptions, authInfo: HttpAuthInfo) {
   const name = authInfo?.extra?.surface;
   const surface = typeof name === "string" ? urlSurfaceFor(name) : undefined;
   return surface
