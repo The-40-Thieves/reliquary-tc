@@ -385,15 +385,17 @@ describe("stdio tool contexts follow the request's declared client features", ()
     });
 
   it(
-    "a modern client that declares sampling gets ctx.sample; one that does not gets none",
+    "a modern client gets no ctx.sample, declared or not: the SDK refuses the request on this era",
     async () => {
       const h = harness({ featureTool: "features" });
       try {
         await discover(h, 1);
-        const declared = await callFeatures(h, 2, { sampling: {} });
-        expect(declared.result?.structuredContent).toEqual({ sample: "function" });
+        const declared = await callFeatures(h, 2, { sampling: {}, roots: {} });
+        expect(declared.result?.structuredContent).toEqual({ sample: "undefined", roots: null });
         const bare = await callFeatures(h, 3, {});
-        expect(bare.result?.structuredContent).toEqual({ sample: "undefined" });
+        expect(bare.result?.structuredContent).toEqual({ sample: "undefined", roots: null });
+        // Nothing was asked of the client: no server-to-client request reached the wire.
+        expect(h.msgs.filter((m) => "method" in m && "id" in m)).toEqual([]);
       } finally {
         await h.handle.close();
       }

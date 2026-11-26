@@ -344,17 +344,26 @@ const MATRIX: MatrixCell[] = [
     revision: MODERN,
     feature: "roots",
     expectation:
-      "the per-request `_meta.clientCapabilities` backfills `getClientCapabilities()` on THIS " +
-      "request (SDK-internal `seedClientIdentityFromEnvelope`, called only on the modern route), " +
-      "so a client that declares `roots` on the call reaches the GATE correctly — proven " +
-      "code-side by the `sampling` row below, which exercises the identical gate/backfill " +
-      "mechanism through a boolean (`clientSupportsSampling`) that needs no live client to read. " +
-      "Whether the follow-on `listRoots()` round trip actually returns a real client's roots is a " +
-      "SEPARATE claim this repo cannot check itself: this harness has no live bidirectional MCP " +
-      "client to answer that request, so `clientRoots`'s try/catch converts the failed round trip " +
-      "to `undefined` — observationally identical to the legacy no-capability case above, for a " +
-      "completely different reason. That leg needs a real client.",
-    provenance: "needs-live-client-verify",
+      "`ctx.roots` is exposed and resolves `undefined` even when the client declares `roots` on " +
+      "the call: the SDK refuses `roots/list` on a 2026-07-28 connection before anything is sent " +
+      "(the era's replacement is the multi-round-trip result), so the server does not ask.",
+    provenance: "asserted-from-code",
+    assert: async () => {
+      const h = await boot();
+      try {
+        const r = await modern(
+          h.port,
+          "tools/call",
+          { name: "echo_caller_context", arguments: {} },
+          "echo_caller_context",
+        );
+        expect(r.status).toBe(200);
+        expect(r.json.result.structuredContent.has_roots).toBe(true);
+        expect(r.json.result.structuredContent.roots).toBeNull();
+      } finally {
+        await h.close();
+      }
+    },
   },
 
   // --- sampling ------------------------------------------------------------------------------
@@ -387,8 +396,9 @@ const MATRIX: MatrixCell[] = [
     revision: MODERN,
     feature: "sampling",
     expectation:
-      "the per-request envelope backfill applies here too: a modern client that declares " +
-      "`sampling` in `_meta.clientCapabilities` on the SAME call gets `ctx.sample` attached.",
+      "`ctx.sample` is absent even when the client declares `sampling` in " +
+      "`_meta.clientCapabilities` on the call: the SDK refuses `sampling/createMessage` on a " +
+      "2026-07-28 connection before anything is sent, so a hook there could only fail.",
     provenance: "asserted-from-code",
     assert: async () => {
       const h = await boot();
@@ -400,7 +410,7 @@ const MATRIX: MatrixCell[] = [
           "echo_caller_context",
         );
         expect(r.status).toBe(200);
-        expect(r.json.result.structuredContent.has_sample).toBe(true);
+        expect(r.json.result.structuredContent.has_sample).toBe(false);
       } finally {
         await h.close();
       }
