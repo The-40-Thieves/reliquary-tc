@@ -52,10 +52,22 @@ interface SearchedVault {
   acl: CallerContext["acl"];
 }
 
-interface Candidate {
-  vault: SearchedVault;
+interface Note {
   rel: string;
   mtime: number;
+}
+
+/** One vault's markdown notes, and the read gate (ACL identity, Excluded files) for one of them.
+ *  The gate is applied only to the notes a call is about to offer: it costs a lookup per note, and
+ *  the host calls on every keystroke. */
+interface Pool {
+  vault: SearchedVault;
+  notes: Note[];
+  admits: (rel: string) => boolean;
+}
+
+interface Candidate extends Note {
+  pool: Pool;
   rank: number;
 }
 
@@ -73,12 +85,8 @@ function rankOf(rel: string, query: string): number | null {
   return null;
 }
 
-/** Readable, non-excluded markdown notes from the notes table (rows judged on their ACL identity). */
-function candidatesFromIndex(
-  deps: SearchMentionsDeps,
-  ctx: CallerContext,
-  vault: SearchedVault,
-): Array<{ rel: string; mtime: number }> {
+/** Markdown notes from the notes table; a row is admitted on its ACL identity. */
+function poolFromIndex(deps: SearchMentionsDeps, ctx: CallerContext, vault: SearchedVault): Pool {
   const excluded = vaultExclusionFor(deps.vaultRegistry, vault.id);
   const readable = readableStoredRow(ctx.db, vault.id, (acl) =>
     readableRel(vault.acl, acl, ctx.grantedScopes),
@@ -86,26 +94,33 @@ function candidatesFromIndex(
   const rows = ctx.db
     .prepare("SELECT path, mtime FROM notes WHERE vault_id = ?")
     .all(vault.id) as Array<{ path: string; mtime: number }>;
-  return rows
-    .filter(
-      (r) =>
-        r.path.toLowerCase().endsWith(".md") && !excluded.isExcluded(r.path) && readable(r.path),
-    )
-    .map((r) => ({ rel: r.path, mtime: r.mtime }));
+  return {
+    vault,
+    notes: rows
+      .filter((r) => r.path.toLowerCase().endsWith(".md"))
+      .map((r) => ({ rel: r.path, mtime: r.mtime })),
+    admits: (rel) => !excluded.isExcluded(rel) && readable(rel),
+  };
 }
 
-/** Readable, non-excluded markdown notes from a disk walk (the list_notes listing). */
-function candidatesFromDisk(
-  deps: SearchMentionsDeps,
-  ctx: CallerContext,
-  vault: SearchedVault,
-): Array<{ rel: string; mtime: number }> {
+/** Markdown notes from a disk walk (the list_notes listing); an entry is admitted as walked. */
+function poolFromDisk(deps: SearchMentionsDeps, ctx: CallerContext, vault: SearchedVault): Pool {
   const excluded = vaultExclusionFor(deps.vaultRegistry, vault.id);
-  return walkVault(vault.root, { extensions: [".md"] })
-    .filter(
-      (e) => readableEntry(vault.acl, e, ctx.grantedScopes) && !excluded.isExcluded(e.relPath),
-    )
-    .map((e) => ({ rel: e.relPath, mtime: e.mtime }));
+  const entries = new Map(
+    walkVault(vault.root, { extensions: [".md"] }).map((e) => [e.relPath, e]),
+  );
+  return {
+    vault,
+    notes: [...entries.values()].map((e) => ({ rel: e.relPath, mtime: e.mtime })),
+    admits: (rel) => {
+      const entry = entries.get(rel);
+      return (
+        entry !== undefined &&
+        readableEntry(vault.acl, entry, ctx.grantedScopes) &&
+        !excluded.isExcluded(rel)
+      );
+    },
+  };
 }
 
 /** The vaults one call searches: the named one, or every vault resources/list serves this caller. */
@@ -117,7 +132,8 @@ function searchedVaults(
 ): SearchedVault[] {
   const reg = deps.vaultRegistry;
   const foreign = servesForeignVaults(ctx, reg);
-  const own = reg.resolve(ctx.vaultId);
+  // Dispatch re-points ctx.vaultId at a named vault; the caller's own one is kept beside it.
+  const own = reg.resolve(ctx.callerVaultId ?? ctx.vaultId);
   const vaults =
     named !== undefined
       ? [reg.resolve(named)].filter((v) => foreign || v.id === own.id)
@@ -145,12 +161,10 @@ export function buildSearchMentionsTool(
       const indexed = deps.metadataIndex?.ready() === true;
       const ranked: Candidate[] = [];
       for (const vault of searchedVaults(deps, ctx, aclFor, input.vault)) {
-        const pool = indexed
-          ? candidatesFromIndex(deps, ctx, vault)
-          : candidatesFromDisk(deps, ctx, vault);
-        for (const c of pool) {
-          const rank = rankOf(c.rel, query);
-          if (rank !== null) ranked.push({ ...c, vault, rank });
+        const pool = indexed ? poolFromIndex(deps, ctx, vault) : poolFromDisk(deps, ctx, vault);
+        for (const note of pool.notes) {
+          const rank = rankOf(note.rel, query);
+          if (rank !== null) ranked.push({ ...note, pool, rank });
         }
       }
       ranked.sort(
@@ -158,21 +172,23 @@ export function buildSearchMentionsTool(
           a.rank - b.rank ||
           b.mtime - a.mtime ||
           a.rel.localeCompare(b.rel) ||
-          a.vault.id.localeCompare(b.vault.id),
+          a.pool.vault.id.localeCompare(b.pool.vault.id),
       );
       const items: z.infer<typeof ResourceLink>[] = [];
       for (const c of ranked) {
         if (items.length >= input.limit) break;
         try {
-          // Fail closed: a row the canonical-path check refuses, that escapes the vault root, or
-          // that vanished since it was indexed is dropped, never offered.
+          // Fail closed: a row the read gate or the canonical-path check refuses, that escapes the
+          // vault root, or that vanished since it was indexed is dropped, never offered.
+          if (!c.pool.admits(c.rel)) continue;
+          const vault = c.pool.vault;
           const rel = normalizeVaultPath(c.rel);
-          enforcePathAcl(c.vault.acl, "read", rel, c.vault.root, ctx.grantedScopes);
-          const ex = noteExists(resolveVaultPath(c.vault.root, rel));
+          enforcePathAcl(vault.acl, "read", rel, vault.root, ctx.grantedScopes);
+          const ex = noteExists(resolveVaultPath(vault.root, rel));
           if (!ex.exists || ex.type === "folder") continue;
           items.push({
             type: "resource_link",
-            uri: buildResourceUri(c.vault.id, rel),
+            uri: buildResourceUri(vault.id, rel),
             name: stripMd(baseName(rel)),
             title: rel,
             mimeType: "text/markdown",
