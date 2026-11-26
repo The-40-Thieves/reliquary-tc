@@ -198,6 +198,7 @@
               "tools/reference/search_and_read",
               "tools/reference/search_dql",
               "tools/reference/search_jsonlogic",
+              "tools/reference/search_mentions",
               "tools/reference/search_omnisearch",
               "tools/reference/search_regex",
               "tools/reference/search_semantic",
