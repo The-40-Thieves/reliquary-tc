@@ -294,6 +294,9 @@ describe("suggest_tags — client without sampling", () => {
       expect(d.source).toBe("heuristic");
       expect(d.sampling.status).toBe("unsupported");
       expect(d.hint).toMatch(/sampling/i);
+      // A 2026-07-28 client that declared sampling lands here too, so the hint must not say it did not.
+      expect(d.hint).toMatch(/not available on this connection/);
+      expect(d.hint).not.toMatch(/did not advertise MCP sampling, so/);
       // the note says "Baking ... bread": vocabulary tags whose words appear in it, minus its own tags; the more specific tag scores higher
       expect(d.suggestions.map((s) => s.tag)).toEqual(["baking/bread", "baking"]);
       expect(d.suggestions.every((s) => s.in_vocabulary)).toBe(true);

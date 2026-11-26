@@ -26,6 +26,7 @@
 // docs/MCP-CLIENT-COMPAT-MATRIX.md (Finding 2, THE-725/THE-862) and
 // mcp-client-compat-matrix.test.ts for both eras asserted from code.
 import { CLIENT_CAPABILITIES_META_KEY, type Server } from "@modelcontextprotocol/server";
+import { negotiatedModern } from "./elicit-form";
 
 /**
  * The capabilities this request's client declared: the 2026-07-28 per-request envelope when present,
@@ -148,8 +149,13 @@ function handshakeCapabilities(server: Server): unknown {
 
 type SampleParams = { messages: unknown[]; maxTokens: number; systemPrompt?: string };
 
-/** The client features a tool context carries, judged on `caps` (the request's declared ones). */
-export function clientFeatureContext(server: Server, caps: unknown) {
+/**
+ * The client features a tool context carries, judged on `caps` (the request's declared ones). On a
+ * 2026-07-28 connection the SDK refuses `roots/list` and `sampling/createMessage` before anything
+ * is sent, so there the context asks for no roots and carries no `sample`, whatever was declared.
+ */
+export function clientFeatureContext(server: Server, caps: unknown, isModern = false) {
+  if (negotiatedModern(server, isModern)) return { roots: async () => undefined };
   return {
     roots: () => clientRoots(server, caps),
     ...(clientSupportsSampling(server, caps)

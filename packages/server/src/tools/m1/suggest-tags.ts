@@ -248,7 +248,7 @@ export function buildSuggestTagsTool(deps: M1Deps): ToolDefinition {
           { status },
           heuristicTags(title, body, counts, onNote),
           status === "unsupported"
-            ? "The client did not advertise MCP sampling, so these are existing vault tags that match the note's words. A client that supports sampling gets model-written suggestions."
+            ? "MCP sampling is not available on this connection (the client did not advertise it, or the connection uses the 2026-07-28 protocol, on which this server does not request it), so these are existing vault tags that match the note's words. A client that supports sampling on an earlier protocol version gets model-written suggestions."
             : "The client's sampling reply was unusable, so these are existing vault tags that match the note's words.",
         );
 

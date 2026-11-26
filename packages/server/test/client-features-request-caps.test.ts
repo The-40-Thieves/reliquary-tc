@@ -11,12 +11,19 @@ import {
 } from "../src/mcp/client-features";
 
 /** A server whose handshake slot holds `handshake`, with recording listRoots and createMessage. */
-function fakeServer(handshake: unknown) {
+function fakeServer(handshake: unknown, negotiated?: string) {
   const listRoots = vi.fn(async () => ({ roots: [{ uri: "file:///work" }] }));
   const createMessage = vi.fn(async () => ({ role: "assistant" }));
-  const server = { getClientCapabilities: () => handshake, listRoots, createMessage };
+  const server = {
+    getClientCapabilities: () => handshake,
+    getNegotiatedProtocolVersion: () => negotiated,
+    listRoots,
+    createMessage,
+  };
   return { server: server as unknown as Server, listRoots, createMessage };
 }
+
+const BOTH = { roots: {}, sampling: {} };
 
 const SAMPLE = { messages: [], maxTokens: 1 };
 
@@ -53,5 +60,34 @@ describe("client features judged on the request's declared capabilities", () => 
     expect(typeof clientFeatureContext(server, { sampling: {} }).sample).toBe("function");
     expect("sample" in clientFeatureContext(server, {})).toBe(false);
     expect(typeof clientFeatureContext(server, {}).roots).toBe("function");
+  });
+});
+
+// SDK 2.4.0 refuses createMessage and listRoots on a 2026-07-28 connection before anything is sent,
+// so a hook attached there can only fail. The context carries none, and asks the SDK for nothing.
+describe("client features on a 2026-07-28 connection", () => {
+  it("a per-request modern server carries no sample and resolves no roots, without asking", async () => {
+    const { server, listRoots, createMessage } = fakeServer(undefined);
+    const ctx = clientFeatureContext(server, BOTH, true);
+    expect("sample" in ctx).toBe(false);
+    expect(await ctx.roots()).toBeUndefined();
+    expect(listRoots).not.toHaveBeenCalled();
+    expect(createMessage).not.toHaveBeenCalled();
+  });
+
+  it("a long-lived connection that negotiated 2026-07-28 is judged the same way", async () => {
+    const { server, listRoots } = fakeServer(BOTH, "2026-07-28");
+    const ctx = clientFeatureContext(server, BOTH, false);
+    expect("sample" in ctx).toBe(false);
+    expect(await ctx.roots()).toBeUndefined();
+    expect(listRoots).not.toHaveBeenCalled();
+  });
+
+  it("a connection that negotiated 2025-11-25 keeps both", async () => {
+    const { server, listRoots } = fakeServer(BOTH, "2025-11-25");
+    const ctx = clientFeatureContext(server, BOTH, false);
+    expect(typeof ctx.sample).toBe("function");
+    expect(await ctx.roots()).toEqual([{ uri: "file:///work" }]);
+    expect(listRoots).toHaveBeenCalledTimes(1);
   });
 });

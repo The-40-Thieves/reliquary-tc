@@ -593,9 +593,9 @@ export function createMcpServer(opts: McpServerOptions): Server {
     );
     if (progress) ctx = { ...ctx, progress };
     // SEP-2577: bind the deprecated-but-live client features onto the context, so every tool can
-    // reach them. Gated on the client having advertised each one — calling either against a client
-    // that did not is a protocol error, not a soft failure.
-    ctx = { ...ctx, ...clientFeatureContext(server, declared) };
+    // reach them. Gated on the client having advertised each one, and on the era still serving
+    // them: a 2026-07-28 connection gets neither, because the SDK refuses both requests there.
+    ctx = { ...ctx, ...clientFeatureContext(server, declared, isModern) };
     // THE-583 + THE-1106 (CRITICAL fix — see resolveElicitConfirmation's doc comment, elicit-form.ts).
     const confirmation = resolveElicitConfirmation(extra.mcpReq);
     const { roundOutcome, approvedRound } = confirmation;

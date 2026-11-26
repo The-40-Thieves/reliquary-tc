@@ -49,7 +49,10 @@ export function stdioTestBuilder(opts: StdioTestServerOptions) {
       description: "test-only: reports which client features its context carries",
       inputSchema: z.object({}),
       requiredScopes: [],
-      handler: (_input: unknown, ctx: CallerContext) => ({ sample: typeof ctx.sample }),
+      handler: async (_input: unknown, ctx: CallerContext) => ({
+        sample: typeof ctx.sample,
+        roots: (await ctx.roots?.()) ?? null,
+      }),
     } as never);
   }
   const elicitation =
