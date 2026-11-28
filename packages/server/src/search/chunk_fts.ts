@@ -178,13 +178,18 @@ export function deleteChunkFtsRow(db: Database, rowid: number): void {
  * builds `run()`'s result AFTER the statement has executed and throws ERR_OUT_OF_RANGE for a rowid
  * above 2^53, so the throw carries no information: the row is already deleted. Which statement
  * order triggers the flush follows query plans, so an unrelated index change (GH #1160's unique
- * index) can surface it. Only that exact error is swallowed.
+ * index) can surface it. Only that exact error is swallowed. The oversized value also stays as the
+ * connection's last insert rowid, so every later run() in the transaction would throw the same way;
+ * one insert into a temp table moves it back into range.
  */
 function deleteFtsRowIgnoringRowidRange(db: Database, rowid: number): void {
   try {
     db.prepare("DELETE FROM chunk_fts WHERE rowid = ?").run(rowid);
   } catch (e) {
     if ((e as { code?: unknown }).code !== "ERR_OUT_OF_RANGE") throw e;
+    db.exec(
+      "CREATE TEMP TABLE IF NOT EXISTS rowid_reset (x INTEGER); INSERT INTO temp.rowid_reset VALUES (0); DELETE FROM temp.rowid_reset",
+    );
   }
 }
 
