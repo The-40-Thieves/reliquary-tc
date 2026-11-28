@@ -40,94 +40,127 @@ function injectRunFailure(real: Database, matchSql: string): Database {
   };
 }
 
-describe("indexNote transaction rollback (WP3 invariant)", () => {
-  let dir: string;
-  let real: Database;
+describe.each(["legacy", "modular"] as const)(
+  "indexNote transaction rollback (%s)",
+  (writePreparation) => {
+    let dir: string;
+    let real: Database;
 
-  afterEach(() => {
-    real.close?.();
-    rmTemp(dir);
-  });
+    afterEach(() => {
+      real.close?.();
+      rmTemp(dir);
+    });
 
-  it("a failure on the LAST statement of the transaction leaves no partial state", async () => {
-    dir = makeTempDir("otc-idx-rollback-");
-    real = await openNodeSqlite(join(dir, "cache.db"));
-    provisionCacheDb(real);
+    it("a failure on the LAST statement of the transaction leaves no partial state", async () => {
+      dir = makeTempDir("otc-idx-rollback-");
+      real = await openNodeSqlite(join(dir, "cache.db"));
+      provisionCacheDb(real);
 
-    // Fail on the vault_generation bump (generation.ts bumpGeneration) — the LAST write inside
-    // indexNote's transaction, so chunk/embedding/FTS/note writes have all already run on this
-    // connection by the time it throws.
-    const db = injectRunFailure(real, "INSERT INTO vault_generation");
-    const provider = fakeEmbeddingProvider({ dimensions: 8 });
+      // Fail on the vault_generation bump (generation.ts bumpGeneration) — the LAST write inside
+      // indexNote's transaction, so chunk/embedding/FTS/note writes have all already run on this
+      // connection by the time it throws.
+      const db = injectRunFailure(real, "INSERT INTO vault_generation");
+      const provider = fakeEmbeddingProvider({ dimensions: 8 });
 
-    await expect(indexNote(db, provider, VAULT_ID, PATH, RAW, false, () => 1000)).rejects.toThrow(
-      /injected failure/,
-    );
+      await expect(
+        indexNote(
+          db,
+          provider,
+          VAULT_ID,
+          PATH,
+          RAW,
+          false,
+          () => 1000,
+          undefined,
+          false,
+          undefined,
+          undefined,
+          PATH,
+          { writePreparation },
+        ),
+      ).rejects.toThrow(/injected failure/);
 
-    // Query the REAL (unwrapped) connection — the transaction must have rolled back, so none of
-    // this note's writes survive.
-    const chunks = real
-      .prepare("SELECT count(*) AS c FROM chunks WHERE vault_id = ? AND path = ?")
-      .get(VAULT_ID, PATH) as { c: number };
-    expect(chunks.c).toBe(0);
+      // Query the REAL (unwrapped) connection — the transaction must have rolled back, so none of
+      // this note's writes survive.
+      const chunks = real
+        .prepare("SELECT count(*) AS c FROM chunks WHERE vault_id = ? AND path = ?")
+        .get(VAULT_ID, PATH) as { c: number };
+      expect(chunks.c).toBe(0);
 
-    const embeddings = real
-      .prepare(
-        "SELECT count(*) AS c FROM chunk_embeddings e JOIN chunks c ON c.id = e.chunk_id WHERE c.vault_id = ? AND c.path = ?",
-      )
-      .get(VAULT_ID, PATH) as { c: number };
-    expect(embeddings.c).toBe(0);
-
-    const notes = real
-      .prepare("SELECT count(*) AS c FROM notes WHERE vault_id = ? AND path = ?")
-      .get(VAULT_ID, PATH) as { c: number };
-    expect(notes.c).toBe(0);
-
-    const ftsTableExists = real
-      .prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'chunk_fts'")
-      .get() as { x: number } | undefined;
-    if (ftsTableExists) {
-      // THE-711 follow-up: chunk_fts is contentless — `WHERE path = ?` is not just unavailable,
-      // it would silently match zero and pass vacuously. The path is resolved through the join to
-      // chunks instead, which is also the stronger check: it asserts no FTS row SURVIVES for this
-      // note, orphan or otherwise, rather than that no row carries its path.
-      const fts = real
+      const embeddings = real
         .prepare(
-          "SELECT count(*) AS c FROM chunk_fts JOIN chunks ON chunks.rowid = chunk_fts.rowid WHERE chunks.path = ?",
+          "SELECT count(*) AS c FROM chunk_embeddings e JOIN chunks c ON c.id = e.chunk_id WHERE c.vault_id = ? AND c.path = ?",
         )
-        .get(PATH) as { c: number };
-      expect(fts.c).toBe(0);
-      // And no orphan was left behind either: totals stay reconciled, which is what keeps
-      // ensureChunkFts from triggering a full reindex on the next open.
-      const n = (sql: string) => (real.prepare(sql).get() as { n: number }).n;
-      expect(n("SELECT COUNT(*) AS n FROM chunk_fts")).toBe(n("SELECT COUNT(*) AS n FROM chunks"));
-    }
+        .get(VAULT_ID, PATH) as { c: number };
+      expect(embeddings.c).toBe(0);
 
-    const generationTableExists = real
-      .prepare(
-        "SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'vault_generation'",
-      )
-      .get() as { x: number } | undefined;
-    if (generationTableExists) {
-      const generation = real
-        .prepare("SELECT generation FROM vault_generation WHERE vault_id = ?")
-        .get(VAULT_ID) as { generation: number } | undefined;
-      expect(generation).toBeUndefined();
-    }
-  });
+      const notes = real
+        .prepare("SELECT count(*) AS c FROM notes WHERE vault_id = ? AND path = ?")
+        .get(VAULT_ID, PATH) as { c: number };
+      expect(notes.c).toBe(0);
 
-  it("control: the same note indexes cleanly with no injected failure", async () => {
-    dir = makeTempDir("otc-idx-rollback-ok-");
-    real = await openNodeSqlite(join(dir, "cache.db"));
-    provisionCacheDb(real);
-    const provider = fakeEmbeddingProvider({ dimensions: 8 });
+      const ftsTableExists = real
+        .prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'chunk_fts'")
+        .get() as { x: number } | undefined;
+      if (ftsTableExists) {
+        // THE-711 follow-up: chunk_fts is contentless — `WHERE path = ?` is not just unavailable,
+        // it would silently match zero and pass vacuously. The path is resolved through the join to
+        // chunks instead, which is also the stronger check: it asserts no FTS row SURVIVES for this
+        // note, orphan or otherwise, rather than that no row carries its path.
+        const fts = real
+          .prepare(
+            "SELECT count(*) AS c FROM chunk_fts JOIN chunks ON chunks.rowid = chunk_fts.rowid WHERE chunks.path = ?",
+          )
+          .get(PATH) as { c: number };
+        expect(fts.c).toBe(0);
+        // And no orphan was left behind either: totals stay reconciled, which is what keeps
+        // ensureChunkFts from triggering a full reindex on the next open.
+        const n = (sql: string) => (real.prepare(sql).get() as { n: number }).n;
+        expect(n("SELECT COUNT(*) AS n FROM chunk_fts")).toBe(
+          n("SELECT COUNT(*) AS n FROM chunks"),
+        );
+      }
 
-    const result = await indexNote(real, provider, VAULT_ID, PATH, RAW, false, () => 1000);
-    expect(result.upserted).toBe(2);
+      const generationTableExists = real
+        .prepare(
+          "SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'vault_generation'",
+        )
+        .get() as { x: number } | undefined;
+      if (generationTableExists) {
+        const generation = real
+          .prepare("SELECT generation FROM vault_generation WHERE vault_id = ?")
+          .get(VAULT_ID) as { generation: number } | undefined;
+        expect(generation).toBeUndefined();
+      }
+    });
 
-    const chunks = real
-      .prepare("SELECT count(*) AS c FROM chunks WHERE vault_id = ? AND path = ?")
-      .get(VAULT_ID, PATH) as { c: number };
-    expect(chunks.c).toBe(2);
-  });
-});
+    it("control: the same note indexes cleanly with no injected failure", async () => {
+      dir = makeTempDir("otc-idx-rollback-ok-");
+      real = await openNodeSqlite(join(dir, "cache.db"));
+      provisionCacheDb(real);
+      const provider = fakeEmbeddingProvider({ dimensions: 8 });
+
+      const result = await indexNote(
+        real,
+        provider,
+        VAULT_ID,
+        PATH,
+        RAW,
+        false,
+        () => 1000,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        PATH,
+        { writePreparation },
+      );
+      expect(result.upserted).toBe(2);
+
+      const chunks = real
+        .prepare("SELECT count(*) AS c FROM chunks WHERE vault_id = ? AND path = ?")
+        .get(VAULT_ID, PATH) as { c: number };
+      expect(chunks.c).toBe(2);
+    });
+  },
+);
