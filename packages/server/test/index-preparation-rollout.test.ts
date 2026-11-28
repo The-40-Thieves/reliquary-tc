@@ -10,6 +10,9 @@ import { type M2Vault, makeM2Vault } from "./m2-helpers";
 const PATH = "Notes/Rollout.md";
 const RAW = "# Alpha\n\nrolloutneedle one\n\n# Beta\n\nrolloutneedle two";
 const NOW = () => 1000;
+const ONE_AT_A_TIME = { batchSize: 1, concurrency: 1 };
+
+type Mode = "legacy" | "modular";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -30,6 +33,55 @@ function snapshot(v: M2Vault) {
     notes: v.db.prepare("SELECT * FROM notes ORDER BY path").all(),
     generation: readGeneration(v.db, v.id),
   };
+}
+
+function spiedVault() {
+  const base = fakeEmbeddingProvider({ dimensions: 32 });
+  const embed = vi.fn<EmbeddingProvider["embed"]>(base.embed);
+  return { v: makeM2Vault({ provider: { ...base, embed } }), embed };
+}
+
+function write(
+  v: M2Vault,
+  mode: Mode,
+  raw = RAW,
+  extra: {
+    provider?: EmbeddingProvider;
+    onIndexed?: () => void;
+    isExcluded?: (rel: string) => boolean;
+    embed?: typeof ONE_AT_A_TIME;
+  } = {},
+) {
+  return indexNote(
+    v.db,
+    extra.provider ?? v.provider,
+    v.id,
+    PATH,
+    raw,
+    false,
+    NOW,
+    extra.onIndexed,
+    true,
+    undefined,
+    extra.isExcluded,
+    PATH,
+    { writePreparation: mode, embed: extra.embed },
+  );
+}
+
+/** A provider whose embed call blocks until released, so a write can be held mid-preparation. */
+function heldProvider(v: M2Vault) {
+  const started = deferred();
+  const released = deferred();
+  const provider: EmbeddingProvider = {
+    ...v.provider,
+    async embed(texts, options) {
+      started.resolve();
+      await released.promise;
+      return v.provider.embed(texts, options);
+    },
+  };
+  return { provider, started, released };
 }
 
 it("keeps legacy preparation as the validated default and rejects unknown selections", () => {
@@ -54,7 +106,7 @@ it("prepares a complete modular note without committing index rows", async () =>
       raw: RAW,
       ts: 1000,
       enrich: true,
-      embed: { batchSize: 1, concurrency: 1 },
+      embed: ONE_AT_A_TIME,
     });
     expect(result.plan?.toEmbed).toHaveLength(2);
     expect(result.plan?.vectors).toHaveLength(2);
@@ -67,33 +119,17 @@ it("prepares a complete modular note without committing index rows", async () =>
   }
 });
 
-describe.each(["legacy", "modular"] as const)("preparation rollout (%s)", (writePreparation) => {
+describe.each(["legacy", "modular"] as const)("preparation rollout (%s)", (mode) => {
   it("executes only the selected preparation and commits once", async () => {
-    const base = fakeEmbeddingProvider({ dimensions: 32 });
-    const embed = vi.fn<EmbeddingProvider["embed"]>(base.embed);
-    const v = makeM2Vault({ provider: { ...base, embed } });
+    const { v, embed } = spiedVault();
     const prepared = vi.spyOn(preparation, "prepareNote");
-    const indexed = vi.fn();
+    const onIndexed = vi.fn();
     try {
-      const result = await indexNote(
-        v.db,
-        v.provider,
-        v.id,
-        PATH,
-        RAW,
-        false,
-        NOW,
-        indexed,
-        true,
-        undefined,
-        undefined,
-        PATH,
-        { writePreparation, embed: { batchSize: 1, concurrency: 1 } },
-      );
+      const result = await write(v, mode, RAW, { onIndexed, embed: ONE_AT_A_TIME });
       expect(result.upserted).toBe(2);
-      expect(prepared).toHaveBeenCalledTimes(writePreparation === "modular" ? 1 : 0);
+      expect(prepared).toHaveBeenCalledTimes(mode === "modular" ? 1 : 0);
       expect(embed).toHaveBeenCalledTimes(2);
-      expect(indexed).toHaveBeenCalledTimes(1);
+      expect(onIndexed).toHaveBeenCalledTimes(1);
       expect(readGeneration(v.db, v.id)).toBe(1);
       expect(ftsCandidates(v.db, v.id, "rolloutneedle", 10)?.map((r) => r.path)).toEqual([PATH]);
     } finally {
@@ -106,21 +142,7 @@ describe.each(["legacy", "modular"] as const)("preparation rollout (%s)", (write
     async (failure) => {
       const v = makeM2Vault();
       try {
-        await indexNote(
-          v.db,
-          v.provider,
-          v.id,
-          PATH,
-          "# Existing\n\npreviousneedle",
-          false,
-          NOW,
-          undefined,
-          true,
-          undefined,
-          undefined,
-          PATH,
-          { writePreparation },
-        );
+        await write(v, mode, "# Existing\n\npreviousneedle");
         const before = snapshot(v);
         const embed = vi.fn<EmbeddingProvider["embed"]>(async (texts, options) => {
           if (embed.mock.calls.length > 1) {
@@ -131,26 +153,13 @@ describe.each(["legacy", "modular"] as const)("preparation rollout (%s)", (write
           }
           return v.provider.embed(texts, options);
         });
-        const indexed = vi.fn();
+        const onIndexed = vi.fn();
+        const provider = { ...v.provider, embed };
         await expect(
-          indexNote(
-            v.db,
-            { ...v.provider, embed },
-            v.id,
-            PATH,
-            RAW,
-            false,
-            NOW,
-            indexed,
-            true,
-            undefined,
-            undefined,
-            PATH,
-            { writePreparation, embed: { batchSize: 1, concurrency: 1 } },
-          ),
+          write(v, mode, RAW, { provider, onIndexed, embed: ONE_AT_A_TIME }),
         ).rejects.toThrow(failure === "rejection" ? /rejected/ : /synthetic outage/);
         expect(embed).toHaveBeenCalledTimes(2);
-        expect(indexed).not.toHaveBeenCalled();
+        expect(onIndexed).not.toHaveBeenCalled();
         expect(snapshot(v)).toEqual(before);
         expect(ftsCandidates(v.db, v.id, "previousneedle", 10)?.map((r) => r.path)).toEqual([PATH]);
         expect(ftsCandidates(v.db, v.id, "rolloutneedle", 10)).toEqual([]);
@@ -161,25 +170,9 @@ describe.each(["legacy", "modular"] as const)("preparation rollout (%s)", (write
   );
 
   it("keeps excluded text searchable without sending it to the provider", async () => {
-    const base = fakeEmbeddingProvider({ dimensions: 32 });
-    const embed = vi.fn<EmbeddingProvider["embed"]>(base.embed);
-    const v = makeM2Vault({ provider: { ...base, embed } });
+    const { v, embed } = spiedVault();
     try {
-      await indexNote(
-        v.db,
-        v.provider,
-        v.id,
-        PATH,
-        RAW,
-        false,
-        NOW,
-        undefined,
-        true,
-        undefined,
-        (path) => path === PATH,
-        PATH,
-        { writePreparation },
-      );
+      await write(v, mode, RAW, { isExcluded: (path) => path === PATH });
       expect(embed).not.toHaveBeenCalled();
       expect(v.db.prepare("SELECT embedding_excluded FROM chunks").all()).toEqual([
         { embedding_excluded: 1 },
@@ -193,30 +186,12 @@ describe.each(["legacy", "modular"] as const)("preparation rollout (%s)", (write
   });
 
   it("switches preparation on an unchanged note without re-embedding or rebuilding", async () => {
-    const base = fakeEmbeddingProvider({ dimensions: 32 });
-    const embed = vi.fn<EmbeddingProvider["embed"]>(base.embed);
-    const v = makeM2Vault({ provider: { ...base, embed } });
-    const run = (mode: "legacy" | "modular") =>
-      indexNote(
-        v.db,
-        v.provider,
-        v.id,
-        PATH,
-        RAW,
-        false,
-        NOW,
-        undefined,
-        true,
-        undefined,
-        undefined,
-        PATH,
-        { writePreparation: mode },
-      );
+    const { v, embed } = spiedVault();
     try {
-      await run(writePreparation === "legacy" ? "modular" : "legacy");
+      await write(v, mode === "legacy" ? "modular" : "legacy");
       const before = snapshot(v);
       embed.mockClear();
-      const result = await run(writePreparation);
+      const result = await write(v, mode);
       expect(result.unchanged).toBe(2);
       expect(result.upserted).toBe(0);
       expect(embed).not.toHaveBeenCalled();
@@ -230,73 +205,19 @@ describe.each(["legacy", "modular"] as const)("preparation rollout (%s)", (write
     "drops a delayed preparation after a newer %s commits",
     async (mutation) => {
       const v = makeM2Vault();
-      const started = deferred();
-      const released = deferred();
-      const indexed = vi.fn();
-      const provider: EmbeddingProvider = {
-        ...v.provider,
-        async embed(texts, options) {
-          started.resolve();
-          await released.promise;
-          return v.provider.embed(texts, options);
-        },
-      };
+      const { provider, started, released } = heldProvider(v);
+      const onIndexed = vi.fn();
       let delayed: ReturnType<typeof indexNote> | undefined;
       try {
-        await indexNote(
-          v.db,
-          v.provider,
-          v.id,
-          PATH,
-          RAW,
-          false,
-          NOW,
-          undefined,
-          true,
-          undefined,
-          undefined,
-          PATH,
-          { writePreparation },
-        );
-        delayed = indexNote(
-          v.db,
-          provider,
-          v.id,
-          PATH,
-          "# Delayed\n\nstaleneedle",
-          false,
-          NOW,
-          indexed,
-          true,
-          undefined,
-          undefined,
-          PATH,
-          { writePreparation },
-        );
+        await write(v, mode);
+        delayed = write(v, mode, "# Delayed\n\nstaleneedle", { provider, onIndexed });
         await started.promise;
-        if (mutation === "delete") {
-          deindexNote(v.db, v.id, PATH, false, true, undefined, NOW);
-        } else {
-          await indexNote(
-            v.db,
-            v.provider,
-            v.id,
-            PATH,
-            "# Fresh\n\nfreshneedle",
-            false,
-            NOW,
-            undefined,
-            true,
-            undefined,
-            undefined,
-            PATH,
-            { writePreparation },
-          );
-        }
+        if (mutation === "delete") deindexNote(v.db, v.id, PATH, false, true, undefined, NOW);
+        else await write(v, mode, "# Fresh\n\nfreshneedle");
         const before = snapshot(v);
         released.resolve();
         expect((await delayed).staleSkipped).toBe(true);
-        expect(indexed).not.toHaveBeenCalled();
+        expect(onIndexed).not.toHaveBeenCalled();
         expect(snapshot(v)).toEqual(before);
         expect(ftsCandidates(v.db, v.id, "staleneedle", 10)).toEqual([]);
       } finally {
