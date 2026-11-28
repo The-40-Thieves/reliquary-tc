@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import type { IndexingConfig } from "@the-40-thieves/reliquary-tc-shared";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type EmbeddingProvider, fakeEmbeddingProvider } from "../src/embeddings";
 import { MetricsRecorder } from "../src/metrics/registry";
 import { type IndexHealthState, wireIndexCoordinator } from "../src/runtime/indexing-wiring";
 import { ftsCandidates } from "../src/search/fts";
 import { indexNote, indexVault } from "../src/search/indexer";
+import * as preparation from "../src/search/indexing/prepare-note";
 import type { IndexVaultArgs } from "../src/search/indexing/types";
 import { buildRepresentationManifest } from "../src/search/representation";
 import { type M2Vault, makeM2Vault } from "./m2-helpers";
@@ -22,10 +24,13 @@ const SECTIONS = Array.from(
     `# Section ${i}\n\nObservation ${i} concerns the indexing policy and its consistency across writes.`,
 ).join("\n\n");
 
+afterEach(() => vi.restoreAllMocks());
+
 function wire(
   v: M2Vault,
   policy: Pick<IndexVaultArgs, "chunkTokens" | "embed"> = {},
   enrich = false,
+  writePreparation?: IndexingConfig["writePreparation"],
 ) {
   const health: IndexHealthState = {
     reconcile: "ok",
@@ -46,7 +51,7 @@ function wire(
     chunkTokens: policy.chunkTokens,
     embedConfig: policy.embed,
     chunkContext: enrich,
-    indexing: { writeConcurrency: 1, writeConcurrencyPerVault: 1, queueMax: 100 },
+    indexing: { writeConcurrency: 1, writeConcurrencyPerVault: 1, queueMax: 100, writePreparation },
     vaults: [{ id: v.id, path: v.root }],
     watch: { enabled: false, debounceMs: 0 },
     sqlHooksFor: () => ({}),
@@ -93,13 +98,14 @@ function observedProvider() {
   return { provider, batches, peak: () => peak };
 }
 
-describe("index-on-write policy", () => {
+describe.each(["legacy", "modular"] as const)("index-on-write policy (%s)", (writePreparation) => {
   it.each([false, true])(
     "persists the same chunks and vectors as a vault pass (enrichment=%s)",
     async (enrich) => {
       const bulk = makeM2Vault({ files: { [PATH]: LONG_NOTE } });
       const write = makeM2Vault({ files: { [PATH]: LONG_NOTE } });
-      const wiring = wire(write, { chunkTokens: 64 }, enrich);
+      const wiring = wire(write, { chunkTokens: 64 }, enrich, writePreparation);
+      const prepared = vi.spyOn(preparation, "prepareNote");
       try {
         await indexVault({
           db: bulk.db,
@@ -118,6 +124,7 @@ describe("index-on-write policy", () => {
         await wiring.indexCoordinator.idle();
 
         expect(wiring.health.writeFailures).toBe(0);
+        expect(prepared).toHaveBeenCalledTimes(writePreparation === "modular" ? 1 : 0);
         expect(persisted(bulk).length).toBeGreaterThan(4);
         expect(persisted(write)).toEqual(persisted(bulk));
         expect(ftsCandidates(write.db, write.id, "policyneedle", 10)?.map((r) => r.path)).toEqual([
@@ -138,7 +145,7 @@ describe("index-on-write policy", () => {
   ])("honors the configured $name for provider calls", async (policy) => {
     const observed = observedProvider();
     const v = makeM2Vault({ files: { [PATH]: SECTIONS }, provider: observed.provider });
-    const wiring = wire(v, { embed: policy }, true);
+    const wiring = wire(v, { embed: policy }, true, writePreparation);
     try {
       wiring.reindexHook(v.id, PATH, SECTIONS);
       await wiring.indexCoordinator.idle();

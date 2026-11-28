@@ -5,11 +5,12 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ServerConfigSchema } from "@the-40-thieves/reliquary-tc-shared";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { openDatabase } from "../src/db/open";
 import type { Database } from "../src/db/types";
 import { deterministicVector } from "../src/embeddings/fake";
 import { buildServerRuntime, type ServerRuntime } from "../src/runtime/server-runtime";
+import * as preparation from "../src/search/indexing/prepare-note";
 import { AUDIENCE, HS_SECRET, MODERN, signHs } from "./hitl-wire-helpers";
 import { stallTimeout } from "./stall-timeouts";
 import { makeTempDir, rmTemp } from "./tmp";
@@ -18,6 +19,8 @@ const VAULT = "lifecycle";
 const INITIAL_PATH = "Notes/Lifecycle.md";
 const MOVED_PATH = "Archive/Lifecycle.md";
 const WAIT_MS = stallTimeout(10_000);
+
+afterEach(() => vi.restoreAllMocks());
 
 function note(marker: string): string {
   return `# Lifecycle\n\n${Array.from(
@@ -170,7 +173,7 @@ function chunks(db: Database, path: string): ChunkRow[] {
     .all(VAULT, path) as ChunkRow[];
 }
 
-describe("vault lifecycle over HTTP", () => {
+describe.each(["legacy", "modular"] as const)("vault lifecycle over HTTP (%s)", (mode) => {
   it(
     "indexes writes, confirms mutations, survives restart, watches edits, and removes deleted results",
     async () => {
@@ -178,6 +181,7 @@ describe("vault lifecycle over HTTP", () => {
       const cache = makeTempDir("otc-life-c-");
       const embeddings = await embeddingFixture();
       const jwt = await signHs();
+      const prepared = vi.spyOn(preparation, "prepareNote");
       let runtime: ServerRuntime | undefined;
       let client: Client | undefined;
       let db: Database | undefined;
@@ -205,6 +209,7 @@ describe("vault lifecycle over HTTP", () => {
           },
           indexing: {
             chunkTokens: 64,
+            writePreparation: mode,
             backgroundEmbed: { mode: "immediate" },
           },
           watch: { enabled: watch, debounceMs: 25 },
@@ -300,6 +305,7 @@ describe("vault lifecycle over HTTP", () => {
         await call("write_note", { vault: VAULT, path: INITIAL_PATH, content: original });
         expect(readFileSync(join(vault, INITIAL_PATH), "utf8")).toBe(original);
         await indexed("celestialneedle", INITIAL_PATH);
+        expect(prepared).toHaveBeenCalledTimes(mode === "modular" ? 1 : 0);
         expect(chunks(database(), INITIAL_PATH).length).toBeGreaterThan(4);
         expect(embeddings.batches.some((batch) => batch.length === 2)).toBe(true);
         for (const batch of embeddings.batches) {
@@ -343,10 +349,14 @@ describe("vault lifecycle over HTTP", () => {
         await boot(true);
         expect(chunks(database(), MOVED_PATH)).toEqual(persisted);
         await indexed("orchardneedle", MOVED_PATH);
+        const preparationsBeforeEdit = prepared.mock.calls.length;
 
         // An external editor bypasses tools; only the real watcher can observe this post-boot change.
         writeFileSync(join(vault, MOVED_PATH), note("watcherneedle"), "utf8");
         await indexed("watcherneedle", MOVED_PATH);
+        expect(prepared.mock.calls.length).toBe(
+          preparationsBeforeEdit + (mode === "modular" ? 1 : 0),
+        );
         expect(await search("orchardneedle")).toEqual([]);
         await confirmedCall(port, jwt, "delete_note", { vault: VAULT, path: MOVED_PATH }, () => {
           expect(existsSync(join(vault, MOVED_PATH))).toBe(true);

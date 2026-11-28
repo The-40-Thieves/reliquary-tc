@@ -8,6 +8,7 @@
 // reorder real side-effecting boot steps. See server-runtime.ts for why only `wireIndexResources`
 // is folded into the argv-free composition entry.
 
+import type { IndexingConfig } from "@the-40-thieves/reliquary-tc-shared";
 import { type FolderAcl, makeIndexReadable, makeReindexGate } from "../acl";
 import type { WriteTxnHooks } from "../db/txn";
 import type { Database } from "../db/types";
@@ -261,6 +262,7 @@ export interface IndexCoordinatorDeps {
     writeConcurrency: number;
     writeConcurrencyPerVault: number;
     queueMax: number;
+    writePreparation?: IndexingConfig["writePreparation"];
     memoryBudgetMb?: number;
   };
   /** The CANONICAL vault roots (vaultRegistry.list(), not raw config.vaults), narrowed to what
@@ -363,6 +365,7 @@ export function wireIndexCoordinator(deps: IndexCoordinatorDeps): IndexCoordinat
           {
             chunkTokens: deps.chunkTokens,
             embed: deps.embedConfig,
+            writePreparation: deps.indexing.writePreparation,
           },
         );
       },
