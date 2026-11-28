@@ -7,7 +7,7 @@
 // test/indexer-transaction-rollback.test.ts depends on. indexVault (index-vault.ts) is the batched
 // counterpart and imports deindexNote from here for its stale-path sweep; that sibling direction is
 // fine (only importing indexer.ts itself, the facade, would be a cycle).
-import { err } from "@the-40-thieves/reliquary-tc-shared";
+import { err, type IndexingConfig } from "@the-40-thieves/reliquary-tc-shared";
 import { tableExists } from "../../db/introspect";
 import { inWriteTransaction, type WriteTxnHooks } from "../../db/txn";
 import { cachedPrepare, type Database } from "../../db/types";
@@ -31,10 +31,13 @@ import { syncAclPaths } from "./acl-path-sync";
 import { EMBED_BATCH, EMBED_CONCURRENCY, embedPlans } from "./embed-batches";
 import { computeNotePlan, hasBodyShaColumn } from "./note-plan";
 import { applyNoteWrites, DELETE_CONTRADICTIONS_SQL, fireIndexHook } from "./persist-note-plan";
+import { prepareNote } from "./prepare-note";
 import type { IndexHook, IndexVaultArgs, PlanResult } from "./types";
 import { bumpFenceUnconditional, commitFence } from "./write-fence";
 
-type IndexNoteOptions = Pick<IndexVaultArgs, "chunkTokens" | "embed">;
+type IndexNoteOptions = Pick<IndexVaultArgs, "chunkTokens" | "embed"> & {
+  writePreparation?: IndexingConfig["writePreparation"];
+};
 
 // Single-note plan + embed (indexNote / index-on-write path). indexVault batches embeds instead.
 async function planNoteWrites(
@@ -127,17 +130,23 @@ export async function indexNote(
    *  naturally re-settle the path to its actual current content. */
   staleSkipped: boolean;
 }> {
-  const { plan, unchanged, secretsSkipped, flagged, fenceGeneration } = await planNoteWrites(
-    db,
-    provider,
-    vaultId,
-    path,
-    raw,
-    now(),
-    enrich,
-    isExcluded,
-    options,
-  );
+  // Select once before provider work; failure never invokes the other preparation path.
+  const prepared =
+    options.writePreparation === "modular"
+      ? await prepareNote({
+          db,
+          provider,
+          vaultId,
+          path,
+          raw,
+          ts: now(),
+          enrich,
+          chunkTokens: options.chunkTokens,
+          embed: options.embed,
+          isEgressExcluded: isExcluded,
+        })
+      : await planNoteWrites(db, provider, vaultId, path, raw, now(), enrich, isExcluded, options);
+  const { plan, unchanged, secretsSkipped, flagged, fenceGeneration } = prepared;
   // THE-291: the metadata/FTS row rides the same write (skip empty content — a true delete goes
   // through deindexNote; an empty note has nothing to index).
   const hasNotes = hasNotesTable(db);
